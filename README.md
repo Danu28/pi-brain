@@ -23,7 +23,7 @@ Manual: copy `pi-brain/` to either location above.
 | `remember` | encode episode (`cue`, `summary`, `detail?`) — exact cue → upsert, similar ≥3 → preview unless `force:true` |
 | `recall` | TF-IDF recall by cue, ranked |
 | `think` | PFC scratchpad `goal + hypotheses[1..3]` |
-| `creative-thinking` / `synthesize` | fuse 2–3 cues + latest think |
+| `creative-thinking` | fuse 2–3 cues + latest think |
 | `plan` | ordered tasklist `goal + tasks[]`, update via `id+done` |
 | `habit` | scaffold `.pi/skills/brain-<name>/SKILL.md` |
 | `brain_status` | count + token usage, overload signal |

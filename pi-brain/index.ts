@@ -415,12 +415,12 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // creative-thinking/synthesize — divergent synthesis (episodes + deliberation) — ponytail: one impl, two names
-  const synthesizeParams = Type.Object({
+  // creative-thinking — divergent synthesis (episodes + deliberation)
+  const creativeThinkingParams = Type.Object({
     cues: Type.Array(Type.String(), { description: "2-3 cues to combine", minItems: 2, maxItems: 3 }),
     prompt: Type.Optional(Type.String({ description: "Synthesis prompt (e.g. approach to ...)" })),
   });
-  async function synthesizeExecute(_id: any, params: any, signal: any) {
+  async function creativeThinkingExecute(_id: any, params: any, signal: any) {
     if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
     const pooled: Episode[] = [];
     for (const q of params.cues) {
@@ -439,7 +439,7 @@ export default function (pi: ExtensionAPI) {
     const raw = params.prompt?.trim();
     const isLoose = !raw || raw.length < 15 || /^creative approach/i.test(raw);
     const synthesisPrompt = isLoose
-      ? (raw ? `${raw} — fuse ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}` : `Synthesize a novel approach combining: ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}`)
+      ? (raw ? `${raw} — fuse ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}` : `Create a novel approach combining: ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}`)
       : raw;
     const sources = unique.length ? `Sources:\n${unique.map((e) => `[${e.cue}] ${e.summary}${e.detail ? ` — ${e.detail.slice(0,80)}` : ""}`).join("\n")}` : "";
     const deliberationBlock = recentThink ? `Deliberation:\n${recentThink}` : "";
@@ -450,23 +450,15 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "creative-thinking",
     label: "Creative Thinking",
-    description: "Creative synthesis: fuse distant episodes + latest think into novel approach. Alias: synthesize. Prompt e.g. 'synthesize neon + login into glass login' NOT vague 'creative approach' (loose auto-enriched). No vector DB.",
-    parameters: synthesizeParams,
-    async execute(_id, params, signal) { return synthesizeExecute(_id, params, signal); },
+    description: "Creative synthesis: fuse distant episodes + latest think into novel approach. Prompt e.g. 'creative-thinking neon + login into glass login' NOT vague 'creative approach' (loose auto-enriched). No vector DB.",
+    parameters: creativeThinkingParams,
+    async execute(_id, params, signal) { return creativeThinkingExecute(_id, params, signal); },
   });
-  pi.registerTool({
-    name: "synthesize",
-    label: "Synthesize",
-    description: "Creative synthesis: fuse distant episodes + latest think into novel approach (clear alias for creative-thinking). Prompt e.g. 'synthesize neon + login into glass login' (loose auto-enriched). No vector DB.",
-    parameters: synthesizeParams,
-    async execute(_id, params, signal) { return synthesizeExecute(_id, params, signal); },
-  });
-
   // plan — ordered tasklist after think (ponytail: one tool, id+done for updates)
   pi.registerTool({
     name: "plan",
     label: "Plan",
-    description: "Create/update ordered tasklist after think (+ synthesize/creative-thinking if novel). Use after think/synthesize, before write. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
+    description: "Create/update ordered tasklist after think (+ creative-thinking if novel). Use after think/creative-thinking, before write. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
     parameters: Type.Object({
       goal: Type.Optional(Type.String({ description: "Plan goal (e.g. creative login page)" })),
       tasks: Type.Optional(Type.Array(Type.String(), { description: "Ordered tasks", minItems: 1, maxItems: 10 })),
@@ -634,7 +626,7 @@ export default function (pi: ExtensionAPI) {
       const context = ranked.length
         ? ranked.map((e) => `[${e.cue}] ${e.summary}${e.detail ? " — " + e.detail.slice(0, 160) : ""}`).join("\n")
         : "(no relevant episodes — scan current dir: bash ls + read relevant files smart (only relevant) to find context)";
-      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy: recall (top-3) → think (smart reads) → [synthesize/creative-thinking if novel] → plan → execute(read→edit 1 file→bash) → plan.done → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy: same flow, but on ANY failure (read/edit/write/bash error, non-zero exit) you MUST call think{goal:"debug <failed Task N>", hypotheses:[root cause, fix approach]} before retry, then update plan{id,done} and retry. Execution is blocked until debug-think is done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + smart read only relevant files to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call synthesize/creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (with smart reads + synthesize/creative-thinking if used) and after gathering all required info, call plan{goal,tasks[]} to create [ ] checklist, then mark [x] via plan{id,done} as you execute.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}`;
+      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy: recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan → execute(read→edit 1 file→bash) → plan.done → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy: same flow, but on ANY failure (read/edit/write/bash error, non-zero exit) you MUST call think{goal:"debug <failed Task N>", hypotheses:[root cause, fix approach]} before retry, then update plan{id,done} and retry. Execution is blocked until debug-think is done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + smart read only relevant files to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (with smart reads + creative-thinking if used) and after gathering all required info, call plan{goal,tasks[]} to create [ ] checklist, then mark [x] via plan{id,done} as you execute.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}`;
       // append active plan if any (ponytail: cached, no sort)
       const latestPlan = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
       if (latestPlan) cachedLatestPlan = latestPlan;
