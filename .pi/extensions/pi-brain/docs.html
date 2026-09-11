@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi-Brain Docs — architecture · how it works · how to use</title>
+<style>
+:root{
+  --bg:#0b0f14; --panel:#11161d; --panel2:#151c25; --line:#26303c; --line2:#32404f;
+  --text:#d9e0e8; --muted:#8b98a5; --dim:#5e6a76; --accent:#7aa2ff;
+  --ok:#3fb950; --warn:#e3b341; --err:#f85149; --ext:#bc8cff;
+  --mono:"Cascadia Code",Consolas,"SF Mono",Menlo,monospace;
+  --sans:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box} html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:15.5px/1.6 var(--sans)}
+main{max-width:1180px;margin:0 auto;padding:28px 22px 80px}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+code,.k{font-family:var(--mono);font-size:.9em;background:rgba(122,162,255,.09);border:1px solid rgba(122,162,255,.18);border-radius:5px;padding:.5px 5px;color:#a5c1ff;white-space:nowrap}
+pre.code{background:#0a0e13;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#c9d4df}
+nav{position:sticky;top:0;z-index:50;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav .inner{max-width:1180px;margin:0 auto;padding:8px 22px;display:flex;align-items:center;gap:18px;overflow-x:auto;white-space:nowrap}
+nav .brand{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:14px}
+nav a{color:var(--muted);font-size:12.5px;padding:4px 2px;border-bottom:2px solid transparent}
+nav a:hover{color:var(--text);text-decoration:none;border-bottom-color:var(--accent)}
+.hero{border:1px solid var(--line2);border-radius:16px;background:radial-gradient(1000px 300px at 20% -10%,rgba(122,162,255,.14),transparent),radial-gradient(700px 260px at 90% 0%,rgba(188,140,255,.11),transparent),var(--panel);padding:30px 32px;margin:26px 0 12px}
+.hero h1{margin:0 0 6px;font-size:30px} .hero h1 .pi{color:var(--accent)}
+.hero .sub{color:var(--muted);max-width:880px;font-size:15.5px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.chip{border:1px solid var(--line2);border-radius:999px;padding:3px 11px;font-size:12px;color:var(--muted);background:var(--panel2)}
+section{margin:54px 0 0;scroll-margin-top:70px}
+h2{font-size:23px;display:flex;align-items:center;gap:12px;margin:0 0 4px}
+.secnum{font-family:var(--mono);font-size:13px;color:#0b0f14;background:var(--accent);border-radius:8px;padding:3px 9px;font-weight:800;flex:none}
+h2 .tag{font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line2);border-radius:999px;padding:2px 10px}
+section>p.lede{color:var(--muted);max-width:880px;margin:6px 0 18px}
+h3{font-size:16.5px;margin:28px 0 8px;padding-left:10px;border-left:3px solid var(--accent)}
+h4{font-size:14px;margin:18px 0 6px;color:#b9c5d2}
+p{margin:10px 0} ul,ol{margin:8px 0;padding-left:22px} li{margin:3px 0}
+.muted{color:var(--muted)} .dim{color:var(--dim)} .small{font-size:12.5px}
+.box{border:1px solid var(--line2);border-left:4px solid var(--c,#58a6ff);border-radius:10px;padding:11px 15px;margin:14px 0;background:var(--panel)}
+.box b.h{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--c,#58a6ff);margin-bottom:4px}
+.box.warn{--c:var(--warn);background:rgba(227,179,65,.05)} .box.sec{--c:var(--err);background:rgba(248,81,73,.05)}
+.box.ok{--c:var(--ok);background:rgba(63,185,80,.05)} .box.info{--c:#58a6ff;background:rgba(88,166,255,.05)}
+.fig{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:18px;margin:16px 0;overflow-x:auto}
+.fig .cap{font-size:12px;color:var(--dim);margin-bottom:12px;font-family:var(--mono)}
+.vflow{display:flex;flex-direction:column;align-items:stretch;min-width:560px;row-gap:8px}
+.fork{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0}
+.fork3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:0}
+.n{border:1.5px solid var(--c,#7aa2ff);background:var(--bgc,rgba(122,162,255,.07));border-radius:11px;padding:9px 14px;line-height:1.4;font-size:13.5px}
+.n b{display:block;font-size:13px;color:var(--tc,#dbe6ff)} .n .s{color:var(--muted);font-size:12px;display:block}
+.n code{background:transparent;border:none;padding:0;color:inherit;font-size:11.5px;white-space:normal}
+.n.dim{border-style:dashed;--c:#5e6a76;--bgc:rgba(94,106,118,.05)} .n.ghost{opacity:.75;border-style:dotted}
+.a-d{text-align:center;color:var(--dim);font-size:13px;line-height:13px;padding:2px 0;user-select:none}
+.a-d span{display:block;font-size:11px;color:var(--muted);line-height:13px}
+.nest{border-left:2px solid var(--line2);margin:6px 0 6px 14px;padding-left:14px}
+.stage{font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin:14px 0 6px}
+.c-brain{--c:#bc8cff;--bgc:rgba(188,140,255,.08);--tc:#e8daff}
+.c-pi{--c:#7aa2ff;--bgc:rgba(122,162,255,.07);--tc:#dbe6ff}
+.c-mem{--c:#3fb950;--bgc:rgba(63,185,80,.08);--tc:#c9f5d2}
+.c-sense{--c:#56d4dd;--bgc:rgba(86,212,221,.08);--tc:#d2f6f9}
+.c-exec{--c:#e3b341;--bgc:rgba(227,179,65,.08);--tc:#fae8bd}
+.c-auto{--c:#f778ba;--bgc:rgba(247,120,186,.07);--tc:#ffd6ec}
+.c-ok{--c:#3fb950;--bgc:rgba(63,185,80,.08);--tc:#c9f5d2}
+.c-warn{--c:#e3b341;--bgc:rgba(227,179,65,.07);--tc:#fae8bd}
+.c-err{--c:#f85149;--bgc:rgba(248,81,73,.08);--tc:#ffd0ce}
+.c-dim{--c:#5e6a76;--bgc:rgba(94,106,118,.05);--tc:#8b98a5}
+.twrap{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:12px}
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
+.tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);text-align:left;padding:9px 12px;border-bottom:1px solid var(--line2);background:var(--panel2)}
+.tbl td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr:last-child td{border-bottom:none} .tbl tr:hover td{background:rgba(122,162,255,.03)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0} .legend .n{font-size:11.5px;padding:3px 10px;border-radius:999px}
+.pill{display:inline-block;font-family:var(--mono);font-size:11.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 9px;color:var(--muted);margin:0 4px 4px 0;background:var(--panel2)}
+details.call{border:1px solid var(--line);border-radius:12px;background:var(--panel);margin:14px 0}
+details.call summary{cursor:pointer;padding:12px 16px;font-weight:600;font-size:14px;color:#b9c5d2}
+details.call summary::marker{color:var(--accent)} details.call .body{padding:2px 18px 14px}
+.toc{columns:2;column-gap:36px} .toc a{display:block;color:var(--muted);padding:3px 0;font-size:13.5px}
+.toc a b{color:var(--accent);font-family:var(--mono);font-size:11.5px;margin-right:8px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin:14px 0}
+.card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:13px 15px}
+.card h4{margin:0 0 6px;font-size:13.5px} .card p{margin:0;font-size:13px;color:var(--muted)}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:var(--dim);font-size:13px}
+@media(max-width:900px){.fork3{grid-template-columns:1fr}.duo{grid-template-columns:1fr}.toc{columns:1}}
+@media(max-width:760px){.fork{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav><div class="inner">
+  <span class="brand">π brain — docs</span>
+  <a href="#s0">Overview</a><a href="#s1">Architecture</a><a href="#s2">How it works</a><a href="#s3">How to use</a><a href="#s4">Brain map</a>
+  <span style="margin-left:auto" class="small muted"><code>index.ts</code> · <code>SKILL.md</code> — ~720 lines · 8 tools (7 impls + alias) · tags/refs + gated inject</span>
+</div></nav>
+<main>
+
+<div class="hero">
+  <h1><span class="pi">π</span>-brain docs</h1>
+  <p class="sub">How the brain-inspired extension actually works: <code>index.ts</code> (~720 lines, one factory, 8 tools/7 impls) + <code>SKILL.md</code>. Standalone <code>file://</code> — no build. One file, one <code>Map</code>, TF-IDF recall 2.0 (filters + half-life + tag boost), incremental index, relevance-gated inject, think+plan single-shot.</p>
+  <div class="chips">
+    <span class="chip">📄 <code>pi-brain/docs.html</code> · standalone</span>
+    <span class="chip">🧠 8 tools (7 impls + alias) · 12 events · 1 Map + incremental index</span>
+    <span class="chip">⚡ <code>pi -e ./pi-brain/index.ts</code></span>
+    <span class="chip">🗑️ deletable · untracked</span>
+  </div>
+  <div class="box ok" style="margin-top:16px"><b class="h">Quickstart — 3 blocks, 60s to first recall</b>
+    <pre class="code">remember { cue:"my-fix", summary:"lazy-load DB pool fixes cold start", tags:["infra"], refs:["pi-brain/index.ts"] }</pre>
+    <pre class="code">recall { query:"cold start", tags:["infra"], since:"7d", limit:3 }</pre>
+    <pre class="code">plan { goal:"fix cold start", hypotheses:["pool init eager","lazy-load"], tasks:["fix pool","bash verify"] }</pre>
+    <div class="small muted" style="margin-top:8px"><b>Cue cheat sheet:</b> <code>kebab-short</code> (2× weight), <code>tags</code> (+1.5 per tag hit, group like <code>landmine</code>), <code>refs</code> (file jump), <code>since:"7d"/"24h"/ms</code> filters recency, half-life 0.95/7d auto-decays stale.</div>
+  </div>
+</div>
+
+<div class="box info"><b class="h">Legend</b>
+  <div class="legend">
+    <span class="n c-brain">brain / biology</span><span class="n c-pi">pi core</span><span class="n c-mem">memory</span>
+    <span class="n c-sense">sensory/input</span><span class="n c-exec">executive</span><span class="n c-auto">habit/cerebellum</span>
+  </div>
+  <p class="small muted" style="margin:6px 0 0">CSS reused verbatim from <code>design.html</code>. File map: <code>index.ts</code> = extension, <code>SKILL.md</code> = procedural seed, <code>docs.html</code> = this file.</p>
+</div>
+
+<details class="call"><summary>Contents</summary><div class="body toc">
+  <a href="#s0"><b>0</b> Overview — what ships</a>
+  <a href="#s1"><b>1</b> Architecture</a>
+  <a href="#s2"><b>2</b> How it works</a>
+  <a href="#s3"><b>3</b> How to use</a>
+  <a href="#s4"><b>4</b> Brain → extension map</a>
+</div></details>
+
+<!-- ============ S0 ============ -->
+<section id="s0">
+<h2><span class="secnum">0</span> Overview — what ships <span class="tag">receipt</span></h2>
+<p class="lede">One extension, one closure, one <code>Map</code>. No vector DB, no daemon, no new config. The 5-step gate (Question→Delete→Simplify→Accelerate→Automate) cut ~70% before code.</p>
+
+<div class="twrap"><table class="tbl">
+<tr><th>File</th><th>Purpose</th><th>Lines</th></tr>
+<tr><td><code>pi-brain/index.ts</code></td><td>Single factory <code>export default function(pi: ExtensionAPI)</code> — 8 tools (remember/recall/think/synthesize+combine alias/plan/habit/brain_status) + 12 event handlers + <code>Map&lt;string,Episode&gt;</code> + deliberations</td><td>579</td></tr>
+<tr><td><code>pi-brain/SKILL.md</code></td><td>Procedural seed: when to use 8 tools — now with <code>think</code>/<code>synthesize</code> for reasoning/creativity</td><td>~45</td></tr>
+<tr><td><code>pi-brain/docs.html</code></td><td>This docs file — architecture, how it works, how to use, brain mapping (the only HTML kept)</td><td>~360</td></tr>
+</table></div>
+
+<div class="box ok"><b class="h">What we refused to build</b> SNN, vector DB, new LLM provider, new CLI/daemon, BCI/EEG, TUI visualizer, custom compaction LLM call — all rejected: "pi already does it / YAGNI". Only 7 impls + alias kept: memory, TF-IDF recall, think, synthesize/combine, plan, habit, status.</div>
+</section>
+
+<!-- ============ S1 ============ -->
+<section id="s1">
+<h2><span class="secnum">1</span> Architecture <span class="tag">one file</span></h2>
+<p class="lede">The whole hippocampus is a <code>Map</code> rebuilt from the branch. No class, no DI container — the factory closure <i>is</i> the container.</p>
+
+<div class="fig"><div class="cap">FIG 1 · factory → closure → branch-backed state</div>
+<div class="vflow">
+  <div class="n c-pi"><b>export default function(pi: ExtensionAPI)</b><span class="s">One closure owns <code>episodes: Map&lt;string, Episode&gt;</code>. Called once at startup via jiti (<code>pi -e</code> or auto-discovery). No async factory — state rebuilds from persisted branch.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-mem"><b>Episode { id, cue, summary, detail?, ts, source }</b><span class="s"><code>id = cue:Date.now()</code> · <code>cue</code> is the associative key (2× weight in recall) · <code>ts</code> for recency tie-break · <code>source: "remember" | "auto"</code></span></div>
+  <div class="a-d">▼<span>durable, not in LLM context</span></div>
+  <div class="n c-mem"><b>pi.appendEntry("brain:episode", ep)</b><span class="s">Stored in <code>.pi/sessions/…</code> as <code>type:"entry" entryType:"brain:episode"</code>. Never sent to LLM unless explicitly injected. Survives fork/resume/reload. Appends never overwrite → no <code>withFileMutationQueue</code> needed.</span></div>
+  <div class="a-d">▼<span>waking recall</span></div>
+  <div class="n c-pi"><b>pi.on("session_start", (_ev, ctx) → ctx.sessionManager.getBranch())</b><span class="s"><code>episodes.clear()</code> then scan branch: handles both <code>entry</code> (<code>brain:episode</code>) and legacy <code>toolResult</code> detail shapes. Uses fresh <code>ctx</code> arg — never caches stale manager (fork safety).</span></div>
+</div>
+</div>
+
+<div class="fork">
+  <div>
+    <h3>Entry vs LLM context — the key split</h3>
+    <p class="small">Pi has two stores. Pi-brain exploits both:</p>
+    <ul>
+      <li><b>Entries</b> (<code>appendEntry</code>) = long-term memory. Durable, <b>not</b> in LLM context, shown in TUI via <code>registerEntryRenderer("brain:episode")</code> (collapsed <code>cue</code>, expanded detail). Like hippocampal engrams.</li>
+      <li><b>Tool results</b> = working context. Only surfaced to LLM when we explicitly return <code>content: [text]</code> or inject via <code>before_agent_start</code>. Like PFC working memory (~4 items).</li>
+    </ul>
+    <div class="box warn"><b class="h">Why not a file or DB?</b> Pi already persists entries in session files. Adding a vector DB would duplicate storage and require a new infra — rejected in T01. Substring/BM25 over <code>Map</code> is enough (ponytail ladder).</div>
+  </div>
+  <div>
+    <h3>Storage limits (myelination analog)</h3>
+    <pre class="code">const MAX_BYTES = 50 * 1024;
+const MAX_LINES = 2000;
+function truncate(t: string) → cut
+  lines>2000 → slice + note
+  bytes>50KB → slice + note</pre>
+    <p class="small muted">Same ceiling pi uses (pi-tools §6). Keeps compaction from failing — metabolic collapse if unbounded.</p>
+    <pre class="code">// recall ranking — TF-IDF lite
+tokens = tokenize(query)
+score = Σ term TF * weight (cue 2, summary 1, detail 0.5)
+       + exact phrase bonus
+sort by score desc, then ts desc
+// ponytail: O(n) scan, index if >10k</pre>
+    <p class="small muted">No startup index; lazy on each <code>recall</code>. Sparse coding: only scored episodes bubble up.</p>
+  </div>
+</div>
+
+<h3>Module map</h3>
+<div class="fig"><div class="cap">FIG 1b · one file, flat sections (no layered classes)</div>
+<div class="vflow">
+  <div class="n c-pi"><b>helpers: truncate() + scoreEpisode()</b><span class="s">~25 lines. Pure functions, no state.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-pi"><b>state: episodes Map + entry renderer + session_start</b><span class="s">~35 lines. The hippocampus.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-mem"><b>tools: remember / recall / think / synthesize (alias combine) / plan / habit / brain_status</b><span class="s">~185 lines. Only public surface the model sees (reasoning + creativity added, one impl two names).</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-sense"><b>events: input · before_agent_start · context · tool_result · session_before_compact · resources_discover · tool_call · before_provider_request (trim) · session_shutdown</b><span class="s">~100 lines. Gates, sculptors, hooks, guards — now with real payload trim + deliberation inject.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-dim"><b>bus: pi.events emit/on "brain:episode:encoded" · "brain:overload" · "brain:deliberation"</b><span class="s">~6 lines. Corpus callosum — inter-extension decoupling.</span></div>
+</div>
+</div>
+</section>
+
+<!-- ============ S2 ============ -->
+<section id="s2">
+<h2><span class="secnum">2</span> How it works <span class="tag">lifecycle</span></h2>
+<p class="lede">From cue in to episode out: the perception-action loop mirrored in pi's event lifecycle.</p>
+
+<div class="fig"><div class="cap">FIG 2 · encode → store → recall → consolidate loop (hippocampal loop)</div>
+<div class="vflow">
+  <div class="n c-mem"><b>Encode: remember {cue, summary, detail?} → pi.appendEntry + Map.set + pi.events.emit</b><span class="s">Explicit encoding (study). Also auto-encodes every successful <code>edit/write/bash</code> via <code>tool_result</code> (first 200 chars) — lightweight, no LLM call.</span></div>
+  <div class="a-d">▼<span>durable entry, TUI renderer shows collapsed cue</span></div>
+  <div class="n c-pi"><b>Before each turn: before_agent_start injects 3 most recent episodes</b><span class="s">PFC working memory analog — <code>{message:{role:"system", content:"Recent brain episodes:\n- cue: summary"}}</code>. Only if episodes exist; no provisional empty inject.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-sense"><b>During turn: input gate + context prune</b><span class="s"><code>input</code> normalizes <code>@path</code> (thalamus routing). <code>context</code> keeps system + last 20 if &gt;40 msgs (synaptic pruning — drop low-value toolResults).</span></div>
+  <div class="a-d">▼<span>on demand</span></div>
+  <div class="n c-mem"><b>Recall: recall {query, limit?} → O(n) scored ranking → truncated text + details.episodes</b><span class="s">Cue 2×, summary 1×, detail 0.5×; recency tie-break; fallback to recency if no score &gt;0. Lazy — no index at startup.</span></div>
+  <div class="a-d">▼<span>offline, like sleep</span></div>
+  <div class="n c-dim"><b>Consolidate: session_before_compact → inject top 5 episodes into summary</b><span class="s">Hippocampal replay — replaces raw transcript injection with curated episodes + original summary. No episodes → keep default. Hooks existing compaction, no extra LLM call.</span></div>
+</div>
+</div>
+
+<h3>Event wiring detail</h3>
+<div class="twrap"><table class="tbl">
+<tr><th>Event</th><th>Brain analog</th><th>What it does</th></tr>
+<tr><td><code>session_start</code></td><td>Waking recall</td><td>Rebuild <code>Map</code> from branch; handles both entry + toolResult shapes</td></tr>
+<tr><td><code>input</code></td><td>Thalamus gate</td><td>Normalize <code>@path</code> → <code>{action:"transform"}</code>; else continue</td></tr>
+<tr><td><code>before_agent_start</code></td><td>PFC working memory</td><td>Inject 3 recent episodes as system message</td></tr>
+<tr><td><code>context</code></td><td>Synaptic pruning</td><td>Keep system + last 20 if &gt;40; drop low-value history (cheap tokens ≈ watts)</td></tr>
+<tr><td><code>tool_result</code> (auto-encode)</td><td>Hippocampal encoding</td><td>On <code>edit/write/bash</code> success, append episode (cue=tool:arg, summary=200 chars)</td></tr>
+<tr><td><code>tool_result</code> (patch)</td><td>Anterior cingulate</td><td>On <code>bash</code> error, append hint <code>[ brain: consider recall before retry ]</code></td></tr>
+<tr><td><code>session_before_compact</code></td><td>Sleep replay</td><td>Inject <code>Brain episodes:\n- cue: summary</code> + original summary</td></tr>
+<tr><td><code>resources_discover</code></td><td>Cerebellum skill store</td><td>Contribute <code>brain-*</code> habit paths (progressive disclosure)</td></tr>
+<tr><td><code>tool_call</code></td><td>Amygdala guard</td><td>Block <code>rm -rf</code> unless <code>ctx.ui.confirm</code>; needs <code>hasUI</code> else auto-block</td></tr>
+<tr><td><code>before_provider_request</code></td><td>Cerebellar prediction</td><td>Real trim: if JSON >30KB keep system + last 25 (was void ev)</td></tr>
+<tr><td><code>session_shutdown</code></td><td>—</td><td>Idempotent no-op; entries already durable, no flush needed</td></tr>
+<tr><td><code>pi.events</code></td><td>Corpus callosum</td><td><code>brain:episode:encoded</code> emit; siblings can <code>on</code> without coupling</td></tr>
+</table></div>
+
+<div class="box info"><b class="h">Why no custom compaction LLM call?</b> Pi already compacts. Pi-brain just shapes the summary via <code>session_before_compact</code>. Adding an extra LLM call would double cost and break cache prefix — rejected in design §2.</div>
+
+<div class="fig"><div class="cap">FIG 2b · context path vs memory path (the split)</div>
+<div class="fork">
+  <div class="n c-exec tall"><b>Context path (volatile, to LLM)</b><span class="s"><code>tool_result.content</code> text · <code>before_agent_start</code> inject · <code>recall</code> result text · status text. Bounded by truncate. Pruned by <code>context</code>.</span></div>
+  <div class="n c-mem tall"><b>Memory path (durable, not to LLM)</b><span class="s"><code>appendEntry brain:episode</code> · Map in closure · branch file · entry renderer TUI only. Only enters LLM when we explicitly inject or recall.</span></div>
+</div>
+</div>
+</section>
+
+<!-- ============ S3 ============ -->
+<section id="s3">
+<h2><span class="secnum">3</span> How to use <span class="tag">pi -e</span></h2>
+<p class="lede">Eight tools (7 impls + alias). Call them from the model or from a prompt — <code>SKILL.md</code> tells the model when.</p>
+
+<h3>Install &amp; run</h3>
+<div class="fork">
+  <div class="n c-pi tall"><b>One-off (try it)</b><span class="s"><code>pi -e ./pi-brain/index.ts</code><br>Tools appear in <code>pi.getAllTools()</code>. No npm install, no build.</span></div>
+  <div class="n c-auto tall"><b>Auto-discovery (keep it)</b><span class="s">Copy to <code>~/.pi/agent/extensions/pi-brain/index.ts</code> or <code>.pi/extensions/pi-brain/index.ts</code> (project, needs trust). Then <code>/reload</code> or restart.</span></div>
+</div>
+
+<h3>The tools — contracts from SKILL.md</h3>
+<div class="twrap"><table class="tbl">
+<tr><th>Tool</th><th>Parameters</th><th>Returns</th><th>When (from SKILL.md)</th></tr>
+<tr><td><code>remember</code></td><td><code>{ cue, summary, detail?, tags? string[], refs? string[] }</code></td><td><code>"Encoded id" + entry</code></td><td>Persist fix + tags/refs (group + jump-to-code)</td></tr>
+<tr><td><code>recall</code></td><td><code>{ query, tags? string[], source? "remember"|"auto", since? "7d"|ms, limit? 1–20 }</code></td><td><code>TF-IDF + tag boost + half-life ranked</code></td><td>Find prior episode by cue/tag/recency</td></tr>
+<tr><td><code>think</code></td><td><code>{ goal, hypotheses[], conclusion? }</code></td><td><code>Deliberation saved</code></td><td>Reason explicitly before acting (PFC)</td></tr>
+<tr><td><code>synthesize</code> / <code>combine</code> alias</td><td><code>{ cues: [2-3], prompt? }</code></td><td><code>Synthesis prompt + sources + deliberation</code></td><td>Fuse distant episodes + latest think for novelty (creativity)</td></tr>
+<tr><td><code>habit</code></td><td><code>{ name, when, steps, variant? }</code></td><td><code>Drafted …/SKILL.md</code></td><td>Repeated correction → SKILL + mutate alternative</td></tr>
+<tr><td><code>brain_status</code></td><td><code>{}</code></td><td><code>Episodes / Tokens / overload</code></td><td>How full is brain? (emits overload if >80%)</td></tr>
+</table></div>
+
+<h3>Examples</h3>
+<div class="duo">
+<div>
+<pre class="code">// encode explicitly
+remember { cue:"deploy-fix",
+  summary:"Fixed cold start by lazy-loading DB pool",
+  detail:"pi-brain/index.ts:42 — pool init inside recall" }
+
+// associative recall (substring/BM25)
+recall { query:"deploy" }          → [deploy-fix] …
+recall { query:"", limit:3 }       → 3 most recent
+
+// habit → skill
+habit { name:"pr-review",
+  when:"Use when reviewing a PR for truncation",
+  steps:"1. Check 50KB/2K ceiling\n2. Use truncateHead" }</pre>
+</div>
+<div>
+<pre class="code">// metacognition
+brain_status {} → Episodes: 12
+               Tokens: 8420 / 128000
+
+// auto-encode happens without calling remember:
+//   edit/write/bash success → brain:episode auto-appended
+//   bash error → hint "consider recall before retry"
+//   rm -rf → confirm dialog via tool_call guard</pre>
+<pre class="code"># manual habit path discovery
+ls .pi/skills/brain-*/SKILL.md
+cat .pi/skills/brain-pr-review/SKILL.md</pre>
+</div>
+</div>
+
+<h3>Tips</h3>
+<ul>
+<li><b>Cue design:</b> short kebab keys (<code>deploy-fix</code>, <code>auth-bug</code>) score 2× in recall — beats long sentences.</li>
+<li><b>No startup index:</b> recall is lazy O(n); add an index only if &gt;10k episodes (ponytail note in code).</li>
+<li><b>Fork safety:</b> episodes survive fork/resume/reload via branch scan; use fresh <code>ctx</code> arg, never cache old manager.</li>
+<li><b>Truncation:</b> all outputs bounded to 50KB/2K; no metabolic collapse from large episodes.</li>
+<li><b>Cache:</b> all tools are <code>promptSnippet</code>-free → system prompt prefix stays stable, provider cache hits.</li>
+</ul>
+
+<div class="box warn"><b class="h">Calibration knob</b> Truncation limits (<code>MAX_BYTES</code>/<code>MAX_LINES</code>) and prune threshold (40 msgs → keep 20) are plain constants at top of <code>index.ts</code> — tune like myelination thickness for your provider/context window. Minimal model, knob stays.</div>
+</section>
+
+<!-- ============ S4 ============ -->
+<section id="s4">
+<h2><span class="secnum">4</span> Brain → extension map <span class="tag">one row, one pi mechanism</span></h2>
+<p class="lede">Every brain principle maps to exactly one pi surface — no wrapper that just renames a stdlib call. If a row didn't change agent behavior, it was deleted (design §2).</p>
+
+<h3>8 characteristics → extension behavior</h3>
+<div class="cards">
+  <div class="card"><h4>1 · Plasticity → plain Map + appendEntry</h4><p>Strengthen used paths (recall 2× cue), no recompile. Add habit as SKILL.md when a path repeats.</p></div>
+  <div class="card"><h4>2 · Parallel &amp; distributed → pi's concurrent tool calls</h4><p>Score over Map while other tools run; pi already parallelizes sibling calls — no custom scheduler.</p></div>
+  <div class="card"><h4>3 · Hierarchical + predictive → stacked handlers</h4><p><code>input → before_agent_start → context → before_provider_request</code> chain in load order; only prediction-carrying injections propagate.</p></div>
+  <div class="card"><h4>4 · Sparse &amp; energy-efficient → sparse activation + truncate</h4><p>Only 3 recent injected, top 5 in compaction, ranked recall; 50KB/2K ceiling beats GPU watts-per-inference.</p></div>
+  <div class="card"><h4>5 · Associative memory → recall (BM25/substring)</h4><p>Partial cue retrieves whole episode; no index lookup — pattern completes via score + recency.</p></div>
+  <div class="card"><h4>6 · Consolidation during rest → session_before_compact</h4><p>Hippocampus replays top 5 at compact; cortex (prompt) slowly absorbs. Offline, lossy → generalization (feature).</p></div>
+  <div class="card"><h4>7 · Embodied &amp; grounded → edit/write/bash auto-encode</h4><p>Cognition coupled to motor output; every successful effector leaves an engram without explicit remember.</p></div>
+  <div class="card"><h4>8 · Metacognition → brain_status + cingulate patch</h4><p>Watches itself: <code>getContextUsage</code> reports load; error monitor appends recall hint; knows when it doesn't know.</p></div>
+</div>
+
+<h3>12 regions → pi mechanisms (from design §3 table)</h3>
+<div class="twrap"><table class="tbl">
+<tr><th>Brain principle</th><th>Pi mechanism</th><th>Code location</th></tr>
+<tr><td>Neocortical hierarchy (6 layers)</td><td>Stacked handlers</td><td><code>input</code> → <code>before_agent_start</code> → <code>context</code> → <code>before_provider_request</code></td></tr>
+<tr><td>Thalamus (sensory gate)</td><td><code>input</code> event</td><td><code>input</code> handler: <code>{action:"transform"|"continue"}</code></td></tr>
+<tr><td>Attention (parietal+frontal)</td><td><code>context</code> + compaction</td><td><code>context</code> prune + <code>session_before_compact</code></td></tr>
+<tr><td>Hippocampus (encode→consolidate)</td><td><code>pi.appendEntry</code> + <code>recall</code></td><td><code>remember</code> + <code>recall</code> tools, branch rebuild</td></tr>
+<tr><td>Associative recall</td><td><code>recall</code> grep</td><td><code>scoreEpisode()</code> + <code>recall</code> tool</td></tr>
+<tr><td>Basal ganglia (action selection)</td><td><code>getActiveTools/setActiveTools</code> (deferred)</td><td>Keep tools snippet-free for additive loader if needed</td></tr>
+<tr><td>Cerebellum (habit)</td><td>Skills via <code>resources_discover</code></td><td><code>habit</code> tool + <code>resources_discover</code></td></tr>
+<tr><td>Motor cortex (act)</td><td><code>edit/write/bash</code> auto-encode</td><td><code>tool_result</code> hook, no <code>withFileMutationQueue</code> (append-only)</td></tr>
+<tr><td>Myelination (accelerate)</td><td>Caching + truncate</td><td>50KB/2K + snippet-free + context prune</td></tr>
+<tr><td>Cingulate (error monitor)</td><td><code>tool_result</code> patch</td><td>bash error → <code>[ brain: consider recall …]</code></td></tr>
+<tr><td>Corpus callosum (integration)</td><td><code>pi.events</code> bus</td><td><code>emit("brain:episode:encoded")</code></td></tr>
+<tr><td>Sleep replay (consolidation)</td><td><code>session_before_compact</code></td><td>Top 5 episodes + original summary</td></tr>
+</table></div>
+
+<div class="box ok"><b class="h">Simplify test — did we pass?</b> One file, one Map, one closure rebuilt from branch — no singleton class, no DI container. Each row maps to one pi surface. If it didn't change behavior, it was deleted.</div>
+
+<h3>What ships vs what doesn't</h3>
+<div class="fork">
+  <div class="n c-ok tall"><b>Ships</b><span class="s"><code>index.ts</code> — one factory, 346 lines, 6 tools<br><code>SKILL.md</code> — procedural seed (6 tools)<br><code>docs.html</code> — this file (only HTML kept)<br>No new config, no deps beyond <code>typebox</code>, no daemon.</span></div>
+  <div class="n c-err tall"><b>Does not ship</b><span class="s">No vector DB, no embedding service, no SNN, no BCI, no visualizer, no new provider, no custom compaction LLM call. Add when a real task demands it — YAGNI.</span></div>
+</div>
+</section>
+
+<footer>
+  <div>pi-brain/docs.html · from <code>index.ts</code> (~720 lines, 8 tools/7 impls + incremental index) + <code>SKILL.md</code> · offline <code>file://</code> — the only HTML kept.</div>
+  <div class="small dim" style="margin-top:4px">design.html + implementation-plan.html deleted — specs served their purpose. Tokens reused — ponytail: reuse before invent.</div>
+</footer>
+
+</main>
+</body>
+</html>

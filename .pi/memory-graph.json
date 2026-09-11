@@ -1,0 +1,375 @@
+{
+  "facts": [
+    {
+      "id": "f_615ede",
+      "kind": "landmine",
+      "summary": "harness_validate git-diff-check reds in non-git Pi-Docs; pi-brain/design.html must stay untracked",
+      "detail": "File is delete-after-use and repo has no .git. git-diff-check always reds; skipping harness_commit is correct. Validate via file exists/offline check instead.",
+      "refs": [
+        "pi-brain\\design.html"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e55c04171e2a21efb651c3531c6|fc_01a08e55c04171e2a21efb651c3531c6",
+      "touched": "2026-09-11T02:39:40.246Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T02:50:24.982Z"
+    },
+    {
+      "id": "f_4e48f4",
+      "kind": "files",
+      "summary": "pi-brain/design.html — deletable standalone 5-step brain→pi extension design (offline file://)",
+      "refs": [
+        "pi-brain\\design.html"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e55cc9470129e185e59107ca0c4|fc_01a08e55cc9470129e185e59107ca0c4",
+      "touched": "2026-09-11T02:39:43.420Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T02:56:13.789Z"
+    },
+    {
+      "id": "f_e5ca80",
+      "kind": "files",
+      "summary": "pi-brain/implementation-plan.html — priority-ordered 14-task plan from design §3-§5 (P0→P2, offline file://)",
+      "refs": [
+        "pi-brain\\implementation-plan.html"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e5fa2da7141ab69f9c5196428a4|fc_01a08e5fa2da7141ab69f9c5196428a4",
+      "touched": "2026-09-11T02:50:28.202Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T02:56:13.789Z"
+    },
+    {
+      "id": "f_d87085",
+      "kind": "landmine",
+      "summary": "gate-2 unverified on verifiable task in non-git Pi-Docs: no harness_validate possible without .git",
+      "detail": "14 tasks done, tsc clean, 0 externals, but gate-2 needs harness_validate/git. Repo has no .git by design (pi-brain deletable); manual checks are only verification.",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e65004c7e519666824b24b637e9|fc_01a08e65004c7e519666824b24b637e9",
+      "touched": "2026-09-11T02:56:19.834Z",
+      "status": "active",
+      "hits": 7,
+      "lastUsed": "2026-09-11T05:04:56.311Z"
+    },
+    {
+      "id": "f_d4dac7",
+      "kind": "files",
+      "summary": "pi-brain/index.ts — single-factory brain extension (4 tools, 10 events, 1 Map, branch-safe)",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e65096079b38959f9f0fc0ad907|fc_01a08e65096079b38959f9f0fc0ad907",
+      "touched": "2026-09-11T02:56:21.732Z",
+      "status": "superseded"
+    },
+    {
+      "id": "f_1f3a9e",
+      "kind": "files",
+      "summary": "pi-brain/SKILL.md — procedural seed for pi-brain (when to use remember/recall/habit/status)",
+      "refs": [
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e6510267ed38e82f20b30b125e3|fc_01a08e6510267ed38e82f20b30b125e3",
+      "touched": "2026-09-11T02:56:23.501Z",
+      "status": "superseded"
+    },
+    {
+      "id": "f_b9c150",
+      "kind": "files",
+      "summary": "pi-brain/docs.html — architecture/how-it-works/how-to-use + brain→extension mapping (offline file://)",
+      "refs": [
+        "pi-brain\\docs.html"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e6d5fba7ed08db1f2ef2c3b8d1d|fc_01a08e6d5fba7ed08db1f2ef2c3b8d1d",
+      "touched": "2026-09-11T03:05:28.307Z",
+      "status": "active",
+      "hits": 6,
+      "lastUsed": "2026-09-11T05:04:56.311Z"
+    },
+    {
+      "id": "f_399abd",
+      "kind": "files",
+      "summary": "pi-brain/index.ts — single-factory brain (6 tools: remember/recall/think/combine/habit/status, TF-IDF, branch-safe)",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e76580f7e01aa05c6c94fde820e|fc_01a08e76580f7e01aa05c6c94fde820e",
+      "touched": "2026-09-11T03:15:16.223Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:03:49.432Z"
+    },
+    {
+      "id": "f_72dd4a",
+      "kind": "files",
+      "summary": "pi-brain/SKILL.md — seed for 6-tool brain (remember/recall/think/combine/habit/status + overload)",
+      "refs": [
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08e52-cddd-7311-9877-d6407b67122d:call_01a08e76620b73c0b65dd4f6739060cb|fc_01a08e76620b73c0b65dd4f6739060cb",
+      "touched": "2026-09-11T03:15:18.852Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:03:49.432Z"
+    },
+    {
+      "id": "f_b7c707",
+      "kind": "decision",
+      "summary": "pi-brain supports /pi-brain on/off: on clamps answers to brain episodes via before_agent_start recall+systemPrompt, off restores default",
+      "detail": "Implementation: branch-durable brain:mode entry, session_start rebuilds brainStrict, strict injects TF-IDF top-5 + systemPrompt clamp; off keeps light recent-3 injection. Touched: pi-brain/index.ts, SKILL.md",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ea30d977b0292436fd3e428dc41|fc_01a08ea30d977b0292436fd3e428dc41",
+      "touched": "2026-09-11T04:04:07.353Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:12:13.748Z"
+    },
+    {
+      "id": "f_b1dfc3",
+      "kind": "files",
+      "summary": "pi-brain/index.ts — single-factory brain (6 tools + /pi-brain on/off strict gate, TF-IDF, branch-safe brain:mode)",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ea317fd7032981e7b19e2fa911d|fc_01a08ea317fd7032981e7b19e2fa911d",
+      "touched": "2026-09-11T04:04:09.314Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:12:13.748Z"
+    },
+    {
+      "id": "f_5ce685",
+      "kind": "files",
+      "summary": "pi-brain/SKILL.md — seed for 6-tool brain + /pi-brain on/off/status strict gate (default vs brain-only)",
+      "refs": [
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ea3217c76e3bba0d6960f143f38|fc_01a08ea3217c76e3bba0d6960f143f38",
+      "touched": "2026-09-11T04:04:11.724Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:12:13.748Z"
+    },
+    {
+      "id": "f_d6c720",
+      "kind": "decision",
+      "summary": "strict 5-rule workflow enforced in pi-brain: recall clamp, think-block, combine-novelty, shortest-diff, encode nudge",
+      "detail": "before_agent_start injects TF-IDF top-5 + 5-rule systemPrompt; tool_call blocks write/edit until thinkSatisfied; turn_end/agent_end nudges if hasWriteEdit&&!hasRemember. Branch-durable brain:mode.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08eaa9b7872028c464241ecc119b8|fc_01a08eaa9b7872028c464241ecc119b8",
+      "touched": "2026-09-11T04:12:22.351Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:49:40.561Z"
+    },
+    {
+      "id": "f_202ff1",
+      "kind": "files",
+      "summary": "pi-brain/index.ts — single-factory brain (6 tools + /pi-brain 5-rule strict workflow, think-block, encode nudge, TF-IDF)",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08eaaa565735299da35d995686d51|fc_01a08eaaa565735299da35d995686d51",
+      "touched": "2026-09-11T04:12:24.444Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:49:40.561Z"
+    },
+    {
+      "id": "f_093437",
+      "kind": "files",
+      "summary": "pi-brain/SKILL.md — seed for 6-tool brain + /pi-brain 5-rule strict workflow (recall/think/combine/diff/encode)",
+      "refs": [
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08eaaad9876028d3763c1741691c9|fc_01a08eaaad9876028d3763c1741691c9",
+      "touched": "2026-09-11T04:12:26.343Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:49:40.561Z"
+    },
+    {
+      "id": "f_5f3c66",
+      "kind": "decision",
+      "summary": "added plan tool after think: 6-rule strict workflow (recall/think/plan/combine/diff/encode) with [ ]/[x] checklist",
+      "detail": "plan{goal,tasks[],id?,done?} creates/updates brain:plan entry, TUI renderer, auto-injected in before_agent_start; think->plan->execute->plan.done->remember. Branch-durable via session_start.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08eccd20d78d1b8e6b77abfdcb04b|fc_01a08eccd20d78d1b8e6b77abfdcb04b",
+      "touched": "2026-09-11T04:49:44.623Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:52:10.352Z"
+    },
+    {
+      "id": "f_5c47c3",
+      "kind": "files",
+      "summary": "pi-brain/index.ts — single-factory brain (7 tools: remember/recall/think/plan/combine/habit/status + /pi-brain 6-rule strict workflow)",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08eccdbfe79c298e87c9a93985341|fc_01a08eccdbfe79c298e87c9a93985341",
+      "touched": "2026-09-11T04:49:46.862Z",
+      "status": "active",
+      "hits": 3,
+      "lastUsed": "2026-09-11T05:04:56.311Z"
+    },
+    {
+      "id": "f_88a1a8",
+      "kind": "files",
+      "summary": "pi-brain/SKILL.md — seed for 7-tool brain + /pi-brain 6-rule workflow (recall/think/plan/combine/diff/encode + plan checklist)",
+      "refs": [
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ecce41971a280c1e9a830fa1c47|fc_01a08ecce41971a280c1e9a830fa1c47",
+      "touched": "2026-09-11T04:49:48.438Z",
+      "status": "active",
+      "hits": 3,
+      "lastUsed": "2026-09-11T05:04:56.311Z"
+    },
+    {
+      "id": "f_7ddac4",
+      "kind": "decision",
+      "summary": "strict workflow order corrected: recall → think → [combine if novel] → plan → execute → plan.done → remember",
+      "detail": "combine moved before plan so plan gets all inputs (think+combine) before creating [ ] checklist. Updated clamp in before_agent_start and SKILL.md 6-rule header.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ecf1c7d72b1af4e7b3800fb426d|fc_01a08ecf1c7d72b1af4e7b3800fb426d",
+      "touched": "2026-09-11T04:52:14.288Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T04:55:33.488Z"
+    },
+    {
+      "id": "f_fee439",
+      "kind": "decision",
+      "summary": "strict workflow has happy + unhappy paths: unhappy forces debug think after any failure before retry",
+      "detail": "tool_result isError sets needsDebugThink+clears thinkSatisfied; tool_call blocks read/write/edit/bash until think{goal:'debug <task>',hypotheses:[cause,fix]} clears it. Updated clamp and SKILL.md.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ed2346878f180b65030b10c645d|fc_01a08ed2346878f180b65030b10c645d",
+      "touched": "2026-09-11T04:55:37.291Z",
+      "status": "superseded"
+    },
+    {
+      "id": "f_20026b",
+      "kind": "decision",
+      "summary": "gap fixes shipped to pi-brain: unconditional reset, hasWriteEdit post-success, plan id dedupe, split unhappy gates, habit sanitize",
+      "detail": "Fixes B1-B4: cleared timestamp drift, moved hasWriteEdit to tool_result, brain-plan:ts:rand + normalized dedupe, split needsDebugThink/needsPlanUpdate, habit sanitize+trust gate, cachedLatestPlan. Touched: pi-brain/index.ts, SKILL.md",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ea1-5221-747e-9486-0378db59a048:call_01a08ed6326e78c194a64034f35024a2|fc_01a08ed6326e78c194a64034f35024a2",
+      "touched": "2026-09-11T04:59:59.081Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T05:04:56.311Z"
+    },
+    {
+      "id": "f_225e84",
+      "kind": "decision",
+      "summary": "batch-2 fixes to pi-brain: remember rand+await, think debug-gate, plan optional, habit lowercase, rm guard, unconditional reset",
+      "detail": "remember rand+await, hasRemember post-success, think debug-prefix, plan optional update, habit toLowerCase, rm -fr/--force, unconditional reset+single systemPrompt, auto-episode rand. tsc clean.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08edadd177dc284c3e1cc4badd27e|fc_01a08edadd177dc284c3e1cc4badd27e",
+      "touched": "2026-09-11T05:05:04.423Z",
+      "status": "superseded"
+    },
+    {
+      "id": "f_2bf904",
+      "kind": "decision",
+      "summary": "synthesize replaces combine: fuses episodes + latest think, alias kept for compat, includes detail",
+      "detail": "Was blind to deliberations; now pools top2 per cue + deliberations.slice(-1), merges Sources+Deliberation, only empty if both empty, includes detail. Registered as synthesize + combine alias, one impl two names.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08eee3e897a01bd893fa343d21e89|fc_01a08eee3e897a01bd893fa343d21e89",
+      "touched": "2026-09-11T05:26:14.749Z",
+      "status": "superseded",
+      "hits": 1,
+      "lastUsed": "2026-09-11T05:29:39.248Z"
+    },
+    {
+      "id": "f_c30965",
+      "kind": "decision",
+      "summary": "hardening F1-F7 to pi-brain: think minItems, remember id slice, rm case-insensitive, habit sanitize, plan rand6, cwd fallback, input guard",
+      "detail": "think hypotheses min1, remember id cue slice30+rand6, rm guard lowercases, habit when sanitizes ---/newline, plan/auto rand 4→6 chars, habit cwd uses pi.cwd, input bare @ ignored. tsc clean at 581 lines.",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08ef3a6717992a24caed5ff7cfc69|fc_01a08ef3a6717992a24caed5ff7cfc69",
+      "touched": "2026-09-11T05:32:09.183Z",
+      "status": "superseded"
+    },
+    {
+      "id": "f_eca86a",
+      "kind": "decision",
+      "summary": "Rule5 narrowed to mutating ops: edit/write always, bash only if mkdir/rm/mv/cp or redirection — stops ls/cat noise",
+      "detail": "Before any bash (ls) triggered hasWriteEdit + 4× Rule5 warnings. Now edit/write always encode; bash only if mutating cmd or > redirection. Verified on creative login trace, tsc clean at 594 lines.",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08f00651f7ec2af46fe5080e64ffd|fc_01a08f00651f7ec2af46fe5080e64ffd",
+      "touched": "2026-09-11T05:46:04.778Z",
+      "status": "superseded"
+    },
+    {
+      "id": "f_69b27e",
+      "kind": "decision",
+      "summary": "synthesize prompt auto-enrich: loose/missing fused with cues+think goal, guides LLM to tight prompt",
+      "detail": "Before vague 'creative approach' passed through; now <15 chars or ^creative approach or missing auto-enriches to 'prompt — fuse cues + think: goal'. Tool descs updated with e.g. 'synthesize neon + login into glass login'. tsc 599.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08f055b6a7f93a08aaa0cb708a2a0|fc_01a08f055b6a7f93a08aaa0cb708a2a0",
+      "touched": "2026-09-11T05:51:29.752Z",
+      "status": "active"
+    },
+    {
+      "id": "f_67191e",
+      "kind": "decision",
+      "summary": "Rule5 bash excludes /dev/null redirections: ls 2>/dev/null no longer counts as mutating",
+      "detail": "isMutating now checks > but ignores /dev/null and 2>&1; ls -R 2>/dev/null no longer sets hasWriteEdit, so creative login trace shows warning only after real write.",
+      "refs": [
+        "pi-brain\\index.ts"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08f0c683c70b1a2d9afe9dcec36ff|fc_01a08f0c683c70b1a2d9afe9dcec36ff",
+      "touched": "2026-09-11T05:59:11.456Z",
+      "status": "active"
+    },
+    {
+      "id": "f_7c574b",
+      "kind": "decision",
+      "summary": "7-rule strict workflow: added git commit after plan done — bash git init if needed + add + commit",
+      "detail": "Was 6-rule, now 7: after remember→habit, bash git rev-parse || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes). Updated index.ts + SKILL.md.",
+      "refs": [
+        "pi-brain\\index.ts",
+        "pi-brain\\SKILL.md"
+      ],
+      "source": "01a08ed6-7fa4-747e-9486-037bf8b3f025:call_01a08f1417ef7821ac1d56a6e88ec6f2|fc_01a08f1417ef7821ac1d56a6e88ec6f2",
+      "touched": "2026-09-11T06:07:35.125Z",
+      "status": "active"
+    }
+  ]
+}
