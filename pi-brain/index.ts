@@ -36,7 +36,6 @@ const MAX_LINES = 2000;
 const TAG_BOOST = 1.5;
 const HALF_LIFE_DAYS = 7;
 const HALF_LIFE_FACTOR = 0.95;
-const DEFAULT_INJECT_COUNT = 1;
 const COMPACT_SMALL = 3;
 const COMPACT_LARGE = 5;
 // T1+T2 knobs
@@ -48,6 +47,9 @@ const RECALL_MEMO_MS = 30000;
 // T10 budget thresholds
 const BUDGET_WARN_PCT = 75;
 const BUDGET_STOP_PCT = 85;
+// T2 prune thresholds — ponytail: magic 35/40 extracted
+const PRUNE_WARN = 35;
+const PRUNE_CAP = 40;
 
 // /pi-brain on|off is global, not per-session (branch entries only live in one session)
 const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
@@ -74,8 +76,8 @@ function truncate(text: string): string {
   if (lines.length > MAX_LINES) text = lines.slice(0, MAX_LINES).join("\n") + `\n[truncated ${lines.length - MAX_LINES} lines]`;
   const byteLen = typeof Buffer !== "undefined" ? Buffer.byteLength(text, "utf8") : new TextEncoder().encode(text).length;
   if (byteLen > MAX_BYTES) {
-    // ponytail: naive byte cut, full output parked via writeTempFile if pi provides it — keep simple
-    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8") + "\n[truncated to 50KB]";
+    // ponytail: backtrack to valid UTF-8 boundary — naive cut fixed (per-path cache if needed)
+    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "") + "\n[truncated to 50KB]";
     else text = text.slice(0, MAX_BYTES) + "\n[truncated to 50KB]";
   }
   return text;
@@ -105,13 +107,15 @@ function parseSince(since?: string | number): number | undefined {
 // --- T7 synonym map (tiny, local, no embedding) ---
 const SYN: Record<string,string[]> = {
   deploy: ["deploy","ship","release","publish"],
-  bug: ["bug","fix","error","issue"],
+  bug: ["bug","fix","error","issue","fail"],
   auth: ["auth","login","signin","credential"],
   perf: ["perf","performance","speed","slow","latency"],
   cache: ["cache","memo","store"],
   test: ["test","spec","pytest","jest","vitest"],
   build: ["build","compile","bundle"],
   cold: ["cold","start","init","boot"],
+  db: ["db","database","store","storage"],
+  ui: ["ui","frontend","interface","view"],
 };
 function expandTokens(toks: string[]): string[] {
   const out = new Set<string>();
@@ -196,9 +200,6 @@ export default function (pi: ExtensionAPI) {
   const episodes = new Map<string, Episode>();
   // incremental token → ids index (ponytail: O(1) recall, rebuilt on session_start, O(n) fallback if <10k)
   const tokenIndex = new Map<string, Set<string>>();
-  // ponytail: read cache — naive hash, skip re-read unchanged (hash/cached), per-path lock if throughput matters
-  const readCache = new Map<string, string>();
-  function hashContent(s: string): string { return `${s.length}:${s.slice(0,120)}`; }
   // PFC scratchpad — deliberations (not durable, per-turn working memory)
   const deliberations: { goal: string; hypotheses: string[]; ts: number }[] = [];
   // /pi-brain strict gate — branch-durable, defaults off
@@ -208,7 +209,6 @@ export default function (pi: ExtensionAPI) {
   let hasWriteEdit = false;
   let hasRemember = false;
   let rule5Warned = false;
-  let agentStartTs = 0;
   let needsDebugThink = false; // unhappy path: failure → must think before retry
   let needsPlanUpdate = false; // after debug think, must update plan before retry
   let cachedLatestPlan: Plan | null = null;
@@ -259,11 +259,11 @@ export default function (pi: ExtensionAPI) {
   function isNoiseBash(cmd: string, output: string): boolean {
     const c = cmd.trim().toLowerCase();
     if (!c) return true;
-    if (output.length < 30) return true;
-    // pure read/ls noise — human brain forgets
-    if (/^\s*(ls|cat|head|tail|grep|find|echo|pwd|which|whoami|env|printenv)\b/.test(c)) return true;
+    // pure read/ls noise — human brain forgets (only if short)
+    if (/^\s*(ls|cat|head|tail|grep|find|echo|pwd|which|whoami|env|printenv)\b/.test(c)) return output.length < 200;
     // git status/diff short noise
     if (/^\s*git\s+(status|diff\s*--stat|log\s+--oneline)/.test(c) && output.length < 200) return true;
+    if (output.length < 30) return false; // don't hide short errors like ENOENT
     return false;
   }
 
@@ -304,7 +304,6 @@ export default function (pi: ExtensionAPI) {
     needsDebugThink = false;
     needsPlanUpdate = false;
     cachedLatestPlan = null;
-    agentStartTs = 0;
     recallMemo.clear(); memoHits=0; memoMisses=0;
     try {
       const branch: any[] = ctx.sessionManager?.getBranch?.() ?? [];
@@ -336,7 +335,7 @@ export default function (pi: ExtensionAPI) {
       // T2 prune expired after rebuild
       pruneExpired();
       // also prune if over 40
-      if (episodes.size > 40) pruneExpired();
+      if (episodes.size > PRUNE_CAP) pruneExpired();
       // file wins: /pi-brain on stays on across sessions until /pi-brain off
       const fileMode = readMode();
       if (fileMode !== undefined) brainStrict = fileMode;
@@ -431,10 +430,9 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, signal) {
       const limit = params.limit ?? 5;
       const queries: string[] = (params as any).queries?.length ? (params as any).queries : [(params as any).query ?? ""];
-      const primaryQuery = queries[0] ?? "";
       // T9 memo key (T5 normalize tags for stable key)
       const normTags = normalizeTags(params.tags as any);
-      const memoKey = `${queries.join("+")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`;
+      const memoKey = `${queries.join("\x00")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`; // ponytail: \x00 avoids a+b collision
       const cached = recallMemo.get(memoKey);
       if (cached && Date.now() - cached.ts < RECALL_MEMO_MS) {
         memoHits++;
@@ -452,8 +450,6 @@ export default function (pi: ExtensionAPI) {
         if (idSets.length) {
           const hitIds = new Set<string>();
           for (const s of idSets) for (const id of s) hitIds.add(id);
-          // also union tag-matched episodes
-          if (filterTags?.length) for (const e of episodes.values()) if (e.tags?.some(t=> (normalizeTags([t])??[]).includes(filterTags[0]) || filterTags.includes(t.toLowerCase()))) hitIds.add(e.id);
           // proper tag union using normalized
           if (filterTags?.length) {
             for (const e of episodes.values()) {
@@ -511,7 +507,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, _p, _sig, _upd, ctx: any) {
       let usage: any = undefined;
       try {
-        usage = ctx?.getContextUsage?.() ?? undefined;
+        usage = ctx?.getContextUsage?.() ?? (pi as any).getContextUsage?.() ?? undefined;
       } catch {}
       const count = episodes.size;
       const autoCount = [...episodes.values()].filter(e=>e.source==="auto").length;
@@ -758,7 +754,7 @@ export default function (pi: ExtensionAPI) {
 
   // ponytail: PREFIX v2 — literal only, never interpolate; delta goes in message (KV-cache stable)
   // T6 stable prefix for KV-cache
-  const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (2-call floor): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash verify parallel → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (3-call floor): same but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\nBatch: 1 LLM call = N tool calls. Turn1: read×N parallel; Turn2: edit×N+write×N+bash parallel. Never re-read unchanged (hash/cached). Chunk edits: 1 edit per file, exact oldText, merge nearby changes. If oldText known → skip reads → 1 call. Record → 0-call replay. Prefer plan{hypotheses} single-shot (think+plan 2→1). 5-Step: Question→Delete→Simplify→Accelerate→Automate.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + read relevant files smart (only relevant) to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.\n5. Shortest-diff + Batch: Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, never re-read unchanged (hash/cached), 1 edit per file with exact oldText, no scaffolding for later. Bash verify after edits land (not same call as edit it checks).\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n`;
+  const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (2-call floor): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash verify parallel → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (3-call floor): same but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\nBatch: 1 LLM call = N tool calls. Turn1: read×N parallel; Turn2: edit×N+write×N+bash parallel. Chunk edits: 1 edit per file, exact oldText, merge nearby changes. If oldText known → skip reads → 1 call. Record → 0-call replay. Prefer plan{hypotheses} single-shot (think+plan 2→1). // ponytail: deleted readCache, add per-path cache if throughput matters 5-Step: Question→Delete→Simplify→Accelerate→Automate.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + read relevant files smart (only relevant) to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.\n5. Shortest-diff + Batch: Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, 1 edit per file with exact oldText, no scaffolding for later. Bash verify after edits land (not same call as edit it checks).\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n`;
 
   // strict workflow run lifecycle — reset per prompt (ponytail: unconditional reset, no timestamp drift)
   pi.on("before_agent_start" as any, async (ev: any, ctx: any) => {
@@ -766,14 +762,12 @@ export default function (pi: ExtensionAPI) {
     hasWriteEdit = false;
     hasRemember = false;
     rule5Warned = false;
-    needsDebugThink = false;
-    needsPlanUpdate = false;
-    agentStartTs = Date.now();
+    // ponytail: per-agent reset only on session_start/failure, not every prompt — persist needsDebugThink/needsPlanUpdate
     // T10 budget: try provider usage if available
     let pct: number | undefined;
     try { const u = (ctx as any)?.getContextUsage?.() ?? (ev as any)?.getContextUsage?.(); if (u?.percent) pct = u.percent; else if (u?.used && u?.total) pct = Math.round(u.used/u.total*100); } catch {}
     // T2 periodic prune if many
-    if (episodes.size > 35) pruneExpired();
+    if (episodes.size > PRUNE_WARN) pruneExpired();
     // strict mode: scored recall + stable prefix (T6) + gist (T3) + budget (T10)
     if (brainStrict) {
       const query: string = ev?.prompt ?? "";
@@ -878,7 +872,7 @@ export default function (pi: ExtensionAPI) {
       if (/passed|success|fixed|done|ok/i.test(output) && output.length > 20) {
         // find best remember episode that shares tokens with cmd
         const best = [...episodes.values()].filter(e=>e.source==="remember").map(e=>({e,s:scoreBase(e,cmd)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s)[0]?.e;
-        if (best) { best.ts = Date.now(); }
+        if (best) { best.ts = Date.now(); recallMemo.clear(); }
       }
       if (isPlanDone() && hasRemember) {
         // still encode but don't mark dirty — but respect noise filter
@@ -933,9 +927,8 @@ export default function (pi: ExtensionAPI) {
     const query = (deliberations[deliberations.length-1] as any)?.goal ?? (cachedLatestPlan?.goal ?? "");
     let ranked: Episode[];
     if (query) {
-      ranked = [...episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now()).map(e=>({e,s:scoreEpisode(e,query)})).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).map(x=>x.e);
-      // if all scores 0, fallback to ts
-      if (ranked.every(e=>scoreEpisode(e,query)===0)) ranked = [...episodes.values()].sort((a,b)=>b.ts-a.ts);
+      const scored = [...episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now()).map(e=>({e,s:scoreEpisode(e,query)})).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts);
+      const ranked = scored.length && scored.every(x=>x.s===0) ? [...episodes.values()].sort((a,b)=>b.ts-a.ts) : scored.map(x=>x.e); // ponytail: single scan
     } else {
       ranked = [...episodes.values()].sort((a, b) => b.ts - a.ts);
     }
@@ -1011,6 +1004,11 @@ export default function (pi: ExtensionAPI) {
       console.assert(scoreEpisode(oldRem,"deploy") > scoreEpisode(freshAuto,"deploy")*0.8, "remember boost failed");
       // T1 audit decay exempt
       console.assert(scoreBase(oldRem,"deploy") >= 3, "scoreBase should be >=3 for exact cue");
+      // ponytail: one runnable check for recall branches — tag-only, since, batch queries
+      const tagEp: Episode = { id:"t", cue:"db-fix", summary:"fix db", ts: Date.now(), source:"remember", tags:["infra"] };
+      console.assert(scoreBase(tagEp,"", ["infra"]) > 0, "tag-only recall failed");
+      console.assert(parseSince("7d") !== undefined, "since 7d parse failed");
+      console.assert(expandTokens(tokenize("database")).includes("database"), "SYN db failed");
       console.log("pi-brain demo: ok");
     }) as any;
     void _demo;

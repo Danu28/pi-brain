@@ -9,7 +9,8 @@ echo "Source: $SRC"
 echo " [1] Project - .pi/extensions/pi-brain"
 echo " [2] Global  - ~/.pi/agent/extensions/pi-brain"
 echo " [3] Both"
-read -p "Select [1/2/3]: " CHOICE
+CHOICE="${1:-}"
+if [ -z "$CHOICE" ]; then read -p "Select [1/2/3]: " CHOICE; fi
 install_to() {
   local ED="$1" SD="$2"
   echo "Installing to:"
