@@ -190,7 +190,7 @@ function sourceBoost(e: Episode): number {
 function scoreEpisode(e: Episode, query: string, filterTags?: string[]): number {
   const base = scoreBase(e, query, filterTags);
   if (base === 0) return 0;
-  const ageDays = (Date.now() - e.ts) / 86400000;
+  const ageDays = Math.max(0, (Date.now() - e.ts) / 86400000); // M1: clamp future timestamps
   const decay = Math.pow(HALF_LIFE_FACTOR, ageDays / HALF_LIFE_DAYS);
   return base * decay * sourceBoost(e);
 }
@@ -252,6 +252,16 @@ export default function (pi: ExtensionAPI) {
     }
     if (n) {
       // clear memo on prune
+      recallMemo.clear();
+    }
+    // M2: LRU eviction if still over cap — delete oldest auto then oldest overall
+    while (episodes.size > PRUNE_CAP) {
+      const sorted = [...episodes.values()].sort((a,b)=>a.ts-b.ts);
+      const oldest = sorted.find(e=>e.source==="auto") ?? sorted[0];
+      if (!oldest) break;
+      unindexEpisode(oldest);
+      episodes.delete(oldest.id);
+      n++;
       recallMemo.clear();
     }
     return n;
@@ -928,7 +938,7 @@ export default function (pi: ExtensionAPI) {
     let ranked: Episode[];
     if (query) {
       const scored = [...episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now()).map(e=>({e,s:scoreEpisode(e,query)})).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts);
-      const ranked = scored.length && scored.every(x=>x.s===0) ? [...episodes.values()].sort((a,b)=>b.ts-a.ts) : scored.map(x=>x.e); // ponytail: single scan
+      ranked = scored.length && scored.every(x=>x.s===0) ? [...episodes.values()].sort((a,b)=>b.ts-a.ts) : scored.map(x=>x.e); // ponytail: single scan — fix C1 shadow
     } else {
       ranked = [...episodes.values()].sort((a, b) => b.ts - a.ts);
     }
