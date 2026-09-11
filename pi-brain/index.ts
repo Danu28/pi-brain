@@ -595,14 +595,14 @@ export default function (pi: ExtensionAPI) {
     parameters: creativeThinkingParams,
     async execute(_id, params, signal) { return creativeThinkingExecute(_id, params, signal); },
   });
-  // plan — ordered tasklist after think (ponytail: one tool, id+done for updates)
+  // plan — ordered tasklist after think (ponytail: one tool, id+done for updates) — detailed, well-split
   pi.registerTool({
     name: "plan",
     label: "Plan",
-    description: "Create/update ordered tasklist after think (+ creative-thinking if novel). Use after think/creative-thinking, before write. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
+    description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). Requires 3-10 well-split tasks that match user requirement — detailed enough that execution is easy. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
     parameters: Type.Object({
       goal: Type.Optional(Type.String({ description: "Plan goal (e.g. creative login page)" })),
-      tasks: Type.Optional(Type.Array(Type.String(), { description: "Ordered tasks", minItems: 1, maxItems: 10 })),
+      tasks: Type.Optional(Type.Array(Type.String(), { description: "Detailed ordered tasks (3-10, well-split to match requirement — each task concrete and actionable)", minItems: 3, maxItems: 10 })),
       id: Type.Optional(Type.String({ description: "Existing plan id to update" })),
       done: Type.Optional(Type.Array(Type.Number({ minimum: 0 }), { description: "Indices to mark done (0-based)" })),
       hypotheses: Type.Optional(Type.Array(Type.String(), { description: "Single-shot hypotheses (auto-creates think)", minItems: 1, maxItems: 3 })),
@@ -637,8 +637,11 @@ export default function (pi: ExtensionAPI) {
         needsDebugThink = false;
         if (entry.goal.toLowerCase().trim().startsWith("debug")) needsPlanUpdate = true;
       }
-      // create new plan — ponytail: collision-free id, no goal slop
+      // create new plan — ponytail: collision-free id, no goal slop — enforce detailed 3-10 split
       if (!params.goal || !params.tasks?.length) return { content: [{ type: "text", text: "plan: goal and tasks required for new plan (use id+done to update)" }], details: { error: "missing goal/tasks" } } as any;
+      if (params.tasks.length < 3) return { content: [{ type: "text", text: `plan requires ≥3 detailed tasks (got ${params.tasks.length}) — split the requirement into 3-10 well-structured steps so execution is easy. Example: ["analyze requirement & existing code","update index.ts core logic","update docs & verify"]` }], details: { error: "too few tasks" } } as any;
+      const shortTasks = params.tasks.filter((t: string)=>t.trim().length < 10);
+      if (shortTasks.length) return { content: [{ type: "text", text: `plan tasks must be detailed (≥10 chars each) — short: "${shortTasks[0].slice(0,30)}" — make each task concrete and actionable (what file, what change)` }], details: { error: "tasks not detailed" } } as any;
       const pl: Plan = {
         id: `brain-plan:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,
         goal: truncate(params.goal),
