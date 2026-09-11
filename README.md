@@ -31,9 +31,11 @@ Manual: copy `pi-brain/` to either location above.
 
 ## Strict workflow (on)
 
-`recall → think → [creative-thinking if novel] → plan → read→edit 1 file→bash → plan.done → remember → habit → git commit`
+Happy (2 plan calls): `recall → think → [creative-thinking if novel] → plan #1 → read→edit 1 file→bash → plan #2 done:[all] → remember → habit → git commit`
 
-Unhappy path auto-blocks `write/edit/bash` until `think{goal:"debug <Task N>"}` + `plan{id,done}`.
+Unhappy (3 plan calls): `plan #1 → failure → think{goal:"debug <Task N>"} → plan #2 → retry → plan #3 done:[all] → remember`
+
+Blocks `write/edit/bash` until `think{goal:"debug ..."}` done.
 
 ## Docs
 
