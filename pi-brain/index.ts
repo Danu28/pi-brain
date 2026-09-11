@@ -20,6 +20,7 @@ type Episode = {
   source: string;
   tags?: string[];
   refs?: string[];
+  expiresAt?: number;
 };
 
 type Plan = {
@@ -38,6 +39,15 @@ const HALF_LIFE_FACTOR = 0.95;
 const DEFAULT_INJECT_COUNT = 1;
 const COMPACT_SMALL = 3;
 const COMPACT_LARGE = 5;
+// T1+T2 knobs
+const REMEMBER_BOOST = 2.0;
+const AUTO_BOOST = 0.6;
+const AUTO_TTL_MS = 3 * 86400000;
+// T9 memo TTL
+const RECALL_MEMO_MS = 5000;
+// T10 budget thresholds
+const BUDGET_WARN_PCT = 75;
+const BUDGET_STOP_PCT = 85;
 
 // /pi-brain on|off is global, not per-session (branch entries only live in one session)
 const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
@@ -92,38 +102,93 @@ function parseSince(since?: string | number): number | undefined {
   return isNaN(parsed) ? undefined : parsed;
 }
 
-function scoreEpisode(e: Episode, query: string, filterTags?: string[]): number {
+// --- T7 synonym map (tiny, local, no embedding) ---
+const SYN: Record<string,string[]> = {
+  deploy: ["deploy","ship","release","publish"],
+  bug: ["bug","fix","error","issue"],
+  auth: ["auth","login","signin","credential"],
+  perf: ["perf","performance","speed","slow","latency"],
+  cache: ["cache","memo","store"],
+  test: ["test","spec","pytest","jest","vitest"],
+  build: ["build","compile","bundle"],
+  cold: ["cold","start","init","boot"],
+};
+function expandTokens(toks: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of toks) {
+    out.add(t);
+    if (SYN[t]) for (const s of SYN[t]) out.add(s);
+  }
+  return [...out];
+}
+
+// T10 token estimator
+function estTokens(s: string): number { return Math.ceil(s.length / 4); }
+
+// T3 gist helpers
+function gistForEpisode(e: Episode): string {
+  const first = e.summary.split(/[.!?\n]/)[0]?.trim() || e.summary;
+  const base = `${e.cue}: ${first}`;
+  const tagPart = e.tags?.length ? ` [${e.tags.join(",")}]` : "";
+  const raw = base + tagPart;
+  return raw.length > 120 ? raw.slice(0,117) + "..." : raw;
+}
+function compressEpisodes(list: Episode[]): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of list) {
+    const k = e.cue.toLowerCase().trim();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(`- ${gistForEpisode(e)}`);
+    if (out.length >= 3) break;
+  }
+  return out.join("\n");
+}
+
+// T1 scoring split: base vs ranked
+function scoreBase(e: Episode, query: string, filterTags?: string[]): number {
   const terms = tokenize(query);
+  // expand query tokens for scoring (T7)
+  const expanded = expandTokens(terms);
   const hasQuery = terms.length > 0 || query.trim().length > 0;
   const qLower = query.toLowerCase().trim();
   let s = 0;
-  // token-exact TF — avoids substring false positives ("a" in "data")
   const cueToks = tokenize(e.cue);
   const sumToks = tokenize(e.summary);
   const detToks = tokenize(e.detail ?? "");
   if (qLower && e.cue.toLowerCase().includes(qLower)) s += 2;
   if (qLower && e.summary.toLowerCase().includes(qLower)) s += 1;
-  for (const t of terms) {
+  // term TF using expanded tokens (so "ship" hits "deploy")
+  for (const t of expanded) {
     s += cueToks.filter((x) => x === t).length * 2;
     s += sumToks.filter((x) => x === t).length * 1;
     s += detToks.filter((x) => x === t).length * 0.5;
   }
-  // tag boost: if episode tags intersect query terms or filter tags
+  // tag boost uses normalized tags (T5)
+  const normFilterTags = normalizeTags(filterTags as any);
   if (e.tags?.length) {
-    const eTags = e.tags.map(t=>t.toLowerCase());
-    for (const t of terms) if (eTags.includes(t)) s += TAG_BOOST;
-    if (filterTags?.length) for (const ft of filterTags) if (eTags.includes(ft.toLowerCase())) s += TAG_BOOST;
+    const eTagsNorm = normalizeTags(e.tags) ?? [];
+    for (const t of expanded) if (eTagsNorm.includes(t)) s += TAG_BOOST;
+    if (normFilterTags?.length) for (const ft of normFilterTags) if (eTagsNorm.includes(ft)) s += TAG_BOOST;
   }
-  // half-life decay: older episodes score less
-  const ageDays = (Date.now() - e.ts) / (86400000);
-  const decay = Math.pow(HALF_LIFE_FACTOR, ageDays / HALF_LIFE_DAYS);
-  s *= decay;
-  // tag-only recall: if no query but tag filter matches, give base score
-  if (!hasQuery && filterTags?.length && e.tags?.length) {
-    const matched = filterTags.some(ft => e.tags!.map(t=>t.toLowerCase()).includes(ft.toLowerCase()));
-    if (matched && s === 0) s = TAG_BOOST * decay;
+  // tag-only recall base score
+  if (!hasQuery && normFilterTags?.length && e.tags?.length) {
+    const eTagsNorm = normalizeTags(e.tags) ?? [];
+    const matched = normFilterTags.some(ft => eTagsNorm.includes(ft));
+    if (matched && s === 0) s = TAG_BOOST;
   }
   return s;
+}
+function sourceBoost(e: Episode): number {
+  return e.source === "remember" ? REMEMBER_BOOST : e.source === "auto" ? AUTO_BOOST : 1;
+}
+function scoreEpisode(e: Episode, query: string, filterTags?: string[]): number {
+  const base = scoreBase(e, query, filterTags);
+  if (base === 0) return 0;
+  const ageDays = (Date.now() - e.ts) / 86400000;
+  const decay = Math.pow(HALF_LIFE_FACTOR, ageDays / HALF_LIFE_DAYS);
+  return base * decay * sourceBoost(e);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -171,8 +236,40 @@ export default function (pi: ExtensionAPI) {
     tokenIndex.clear();
     for (const e of episodes.values()) indexEpisode(e);
   }
+  // T2 prune expired auto episodes
+  function pruneExpired(): number {
+    const now = Date.now();
+    let n = 0;
+    for (const [id,e] of episodes) {
+      if (e.expiresAt && e.expiresAt < now) {
+        unindexEpisode(e);
+        episodes.delete(id);
+        n++;
+      }
+    }
+    if (n) {
+      // clear memo on prune
+      recallMemo.clear();
+    }
+    return n;
+  }
+  function isNoiseBash(cmd: string, output: string): boolean {
+    const c = cmd.trim().toLowerCase();
+    if (!c) return true;
+    if (output.length < 30) return true;
+    // pure read/ls noise — human brain forgets
+    if (/^\s*(ls|cat|head|tail|grep|find|echo|pwd|which|whoami|env|printenv)\b/.test(c)) return true;
+    // git status/diff short noise
+    if (/^\s*git\s+(status|diff\s*--stat|log\s+--oneline)/.test(c) && output.length < 200) return true;
+    return false;
+  }
 
-  // T03: TUI renderer for brain:episode — collapsed cue, expanded detail (not in LLM context)
+  // T9 recall memo
+  const recallMemo = new Map<string, { ts: number; ranked: Episode[]; text: string }>();
+  let memoHits = 0;
+  let memoMisses = 0;
+
+  // TUI renderer for brain:episode — collapsed cue, expanded detail (not in LLM context)
   try {
     (pi as any).registerEntryRenderer?.("brain:episode", (entry: any, opts: any, theme: any) => {
       const d: Episode = entry.data ?? entry;
@@ -205,6 +302,7 @@ export default function (pi: ExtensionAPI) {
     needsPlanUpdate = false;
     cachedLatestPlan = null;
     agentStartTs = 0;
+    recallMemo.clear(); memoHits=0; memoMisses=0;
     try {
       const branch: any[] = ctx.sessionManager?.getBranch?.() ?? [];
       let lastMode: boolean | undefined;
@@ -232,6 +330,10 @@ export default function (pi: ExtensionAPI) {
       }
       // rebuild incremental index
       rebuildIndex();
+      // T2 prune expired after rebuild
+      pruneExpired();
+      // also prune if over 40
+      if (episodes.size > 40) pruneExpired();
       // file wins: /pi-brain on stays on across sessions until /pi-brain off
       const fileMode = readMode();
       if (fileMode !== undefined) brainStrict = fileMode;
@@ -271,18 +373,19 @@ export default function (pi: ExtensionAPI) {
         if (refs) exact.refs = refs;
         exact.ts = Date.now();
         exact.source = "remember";
+        delete (exact as any).expiresAt;
         indexEpisode(exact);
         await (pi as any).appendEntry?.("brain:episode", exact);
         episodes.set(exact.id, exact);
+        recallMemo.clear();
         (pi as any).events?.emit?.("brain:episode:encoded", exact);
         return { content: [{ type: "text", text: `Updated (audit: exact cue exists) ${exact.id} — was duplicate cue, merged instead of new` }], details: { id: exact.id, episode: exact, audit: "exact-cue-upsert" } };
       }
-      // similarity audit: reuse scoreEpisode (TF-IDF lite) against cue+summary
-      // ponytail: exclude auto-encoded episodes — they would block the very remember Rule 5 requires
+      // similarity audit: T1 decay-exempt (scoreBase) + source filter
       const query = `${params.cue} ${params.summary}`;
       const scored = [...episodes.values()]
         .filter((e) => e.source !== "auto")
-        .map((e) => ({ e, s: scoreEpisode(e, query, tags) }))
+        .map((e) => ({ e, s: scoreBase(e, query, tags) }))
         .filter((x) => x.s >= 3)
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
         .slice(0, 3);
@@ -303,12 +406,13 @@ export default function (pi: ExtensionAPI) {
       await (pi as any).appendEntry?.("brain:episode", ep);
       episodes.set(ep.id, ep);
       indexEpisode(ep);
+      recallMemo.clear();
       (pi as any).events?.emit?.("brain:episode:encoded", ep);
       return { content: [{ type: "text", text: `Encoded ${ep.id}` }], details: { id: ep.id, episode: ep, audit: scored.length ? "forced" : "clean" } };
     },
   });
 
-  // T06: recall — TF-IDF pattern completion with incremental index
+  // T06: recall — TF-IDF pattern completion with incremental index + memo + synonym expansion
   pi.registerTool({
     name: "recall",
     label: "Recall",
@@ -322,18 +426,34 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal) {
       const limit = params.limit ?? 5;
-      const filterTags = params.tags?.map((t: string)=>t.toLowerCase().trim()).filter(Boolean);
+      // T9 memo key (T5 normalize tags for stable key)
+      const normTags = normalizeTags(params.tags as any);
+      const memoKey = `${params.query}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`;
+      const cached = recallMemo.get(memoKey);
+      if (cached && Date.now() - cached.ts < RECALL_MEMO_MS) {
+        memoHits++;
+        if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
+        return { content: [{ type: "text", text: truncate(cached.text) }], details: { episodes: cached.ranked, cached: true } };
+      }
+      const filterTags = normTags;
       const sinceTs = parseSince(params.since as any);
       let candidates: Episode[] = [...episodes.values()];
-      // incremental index: narrow candidates via token index if query has tokens
-      const qToks = tokenize(params.query);
+      // incremental index: narrow candidates via token index if query has tokens (expanded)
+      const qToks = expandTokens(tokenize(params.query));
       if (qToks.length && tokenIndex.size) {
         const idSets = qToks.map(t => tokenIndex.get(t)).filter(Boolean) as Set<string>[];
         if (idSets.length) {
           const hitIds = new Set<string>();
           for (const s of idSets) for (const id of s) hitIds.add(id);
-          // ponytail: also union tag-matched episodes so tags+query doesn't miss tag-only hits
-          if (filterTags?.length) for (const e of episodes.values()) if (e.tags?.some(t=>filterTags.includes(t.toLowerCase()))) hitIds.add(e.id);
+          // also union tag-matched episodes
+          if (filterTags?.length) for (const e of episodes.values()) if (e.tags?.some(t=> (normalizeTags([t])??[]).includes(filterTags[0]) || filterTags.includes(t.toLowerCase()))) hitIds.add(e.id);
+          // proper tag union using normalized
+          if (filterTags?.length) {
+            for (const e of episodes.values()) {
+              const eNorm = normalizeTags(e.tags) ?? [];
+              if (filterTags.some(ft => eNorm.includes(ft))) hitIds.add(e.id);
+            }
+          }
           const hits = [...hitIds].map(id => episodes.get(id)).filter(Boolean) as Episode[];
           if (hits.length) candidates = hits;
         }
@@ -342,8 +462,9 @@ export default function (pi: ExtensionAPI) {
       candidates = candidates.filter(e => {
         if (params.source && e.source !== params.source) return false;
         if (sinceTs !== undefined && e.ts < sinceTs) return false;
+        if (e.expiresAt && e.expiresAt < Date.now()) return false;
         if (filterTags?.length) {
-          const eTags = (e.tags ?? []).map((t: string)=>t.toLowerCase());
+          const eTags = normalizeTags(e.tags) ?? [];
           if (!filterTags.every((ft: string) => eTags.includes(ft))) return false;
         }
         return true;
@@ -358,14 +479,23 @@ export default function (pi: ExtensionAPI) {
       const ranked = scored.length ? scored : candidates.sort((a, b) => b.ts - a.ts).slice(0, limit);
       if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
 
+      // T8 smart detail slicing: keep full for explicit recall, but truncate gist for display
       const text = ranked.length
         ? ranked.map((e) => `[${e.cue}]${e.tags?.length ? ` [${e.tags.join(",")}]` : ""} ${e.summary}${e.detail ? " — " + e.detail.slice(0, 120) : ""}${e.refs?.length ? ` refs:${e.refs.join(",")}` : ""}`).join("\n")
         : "No episodes yet. Use remember to encode.";
+      // store memo
+      memoMisses++;
+      recallMemo.set(memoKey, { ts: Date.now(), ranked, text });
+      // cap memo size
+      if (recallMemo.size > 50) {
+        const first = recallMemo.keys().next().value;
+        if (first) recallMemo.delete(first);
+      }
       return { content: [{ type: "text", text: truncate(text) }], details: { episodes: ranked } };
     },
   });
 
-  // T07: brain_status — metacognition + overload signal
+  // T07: brain_status — metacognition + overload signal + token est + memo stats (T12)
   pi.registerTool({
     name: "brain_status",
     label: "Brain status",
@@ -377,13 +507,18 @@ export default function (pi: ExtensionAPI) {
         usage = ctx?.getContextUsage?.() ?? undefined;
       } catch {}
       const count = episodes.size;
+      const autoCount = [...episodes.values()].filter(e=>e.source==="auto").length;
+      const remCount = count - autoCount;
       const pct = usage?.percent ?? (usage?.used && usage?.total ? Math.round((usage.used / usage.total) * 100) : undefined);
       const overloaded = (pct !== undefined && pct > 80) || count > 50;
       if (overloaded) (pi as any).events?.emit?.("brain:overload", { episodes: count, percent: pct });
-      const idxStats = `Index: ${tokenIndex.size} tokens → ${episodes.size} episodes (incremental)`;
-      const knobs = `Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d`;
-      const txt = `Episodes: ${count}\nTokens: ${usage?.used ?? "?"} / ${usage?.total ?? "?"}${pct !== undefined ? ` (${pct}%)` : ""}${overloaded ? "\n[overload: consider compaction/pruning]" : ""}\nDeliberations: ${deliberations.length}\n${idxStats}\n${knobs}`;
-      return { content: [{ type: "text", text: txt }], details: { episodes: count, tokens: usage, recent: [...episodes.values()].slice(-3), overloaded, deliberations: deliberations.slice(-3), index: { tokens: tokenIndex.size, episodes: count }, knobs: { MAX_BYTES, MAX_LINES, TAG_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR } } };
+      const idxStats = `Index: ${tokenIndex.size} tokens → ${count} episodes (${remCount} remember, ${autoCount} auto) | memo hits:${memoHits} miss:${memoMisses}`;
+      const gistPreview = [...episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,3).map(gistForEpisode).join(" | ");
+      const gistTokens = estTokens(gistPreview);
+      const knobs = `Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d`;
+      const budget = pct !== undefined ? `Budget: ${pct}% ${pct>BUDGET_STOP_PCT?"(STOP inject)":pct>BUDGET_WARN_PCT?"(warn: inject 1)":""}` : `Budget: est ${gistTokens} tokens gist`;
+      const txt = `Episodes: ${count} (${remCount} remember, ${autoCount} auto)\nTokens: ${usage?.used ?? "?"} / ${usage?.total ?? "?"}${pct !== undefined ? ` (${pct}%)` : ""}${overloaded ? "\n[overload: consider compaction/pruning]" : ""}\nDeliberations: ${deliberations.length}\n${idxStats}\nGist preview (${gistTokens} tok): ${gistPreview.slice(0,120)}\n${knobs}\n${budget}`;
+      return { content: [{ type: "text", text: txt }], details: { episodes: count, autoCount, remCount, tokens: usage, recent: [...episodes.values()].slice(-3), overloaded, deliberations: deliberations.slice(-3), index: { tokens: tokenIndex.size, episodes: count, memoHits, memoMisses }, knobs: { MAX_BYTES, MAX_LINES, TAG_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, REMEMBER_BOOST, AUTO_BOOST } } };
     },
   });
 
@@ -424,7 +559,7 @@ export default function (pi: ExtensionAPI) {
     if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
     const pooled: Episode[] = [];
     for (const q of params.cues) {
-      const qToks = tokenize(q);
+      const qToks = expandTokens(tokenize(q));
       let cand: Episode[] = [...episodes.values()];
       if (qToks.length && tokenIndex.size) {
         const sets = qToks.map(t=>tokenIndex.get(t)).filter(Boolean) as Set<string>[];
@@ -447,7 +582,7 @@ export default function (pi: ExtensionAPI) {
     const synthesisPrompt = isLoose
       ? (raw ? `${raw} — fuse ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}` : `Create a novel approach combining: ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}`)
       : raw;
-    const sources = unique.length ? `Sources:\n${unique.map((e) => `[${e.cue}] ${e.summary}${e.detail ? ` — ${e.detail.slice(0,80)}` : ""}`).join("\n")}` : "";
+    const sources = unique.length ? `Sources:\n${unique.map((e) => `[${e.cue}] ${gistForEpisode(e)}`).join("\n")}` : "";
     const deliberationBlock = recentThink ? `Deliberation:\n${recentThink}` : "";
     const context = [sources, deliberationBlock].filter(Boolean).join("\n\n");
     const text = `${synthesisPrompt}\n\n${context}\n\n→ Combine insights: fuse episode patterns WITH deliberation hypotheses into variant not in either source.`;
@@ -609,8 +744,11 @@ export default function (pi: ExtensionAPI) {
   // T08: deleted thalamic @ gate — pi already normalizes @mentions; gate hijacked @file prompts (YAGNI)
   // ponytail: delete, add back only if proven needed
 
+  // T6 stable prefix for KV-cache
+  const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (plan 2 calls only): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → execute(read→edit 1 file→bash) → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (plan 3 calls only): same flow but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 (update if needed) → retry execute → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + read relevant files smart (only relevant) to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n`;
+
   // strict workflow run lifecycle — reset per prompt (ponytail: unconditional reset, no timestamp drift)
-  pi.on("before_agent_start" as any, async (ev: any) => {
+  pi.on("before_agent_start" as any, async (ev: any, ctx: any) => {
     thinkSatisfied = false;
     hasWriteEdit = false;
     hasRemember = false;
@@ -618,10 +756,15 @@ export default function (pi: ExtensionAPI) {
     needsDebugThink = false;
     needsPlanUpdate = false;
     agentStartTs = Date.now();
-    // strict mode: scored recall + systemPrompt clamp (Rule 1)
+    // T10 budget: try provider usage if available
+    let pct: number | undefined;
+    try { const u = (ctx as any)?.getContextUsage?.() ?? (ev as any)?.getContextUsage?.(); if (u?.percent) pct = u.percent; else if (u?.used && u?.total) pct = Math.round(u.used/u.total*100); } catch {}
+    // T2 periodic prune if many
+    if (episodes.size > 35) pruneExpired();
+    // strict mode: scored recall + stable prefix (T6) + gist (T3) + budget (T10)
     if (brainStrict) {
       const query: string = ev?.prompt ?? "";
-      const all = [...episodes.values()];
+      const all = [...episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now());
       const scored = all
         .map((e) => ({ e, s: scoreEpisode(e, query) }))
         .filter((x) => x.s > 0 || query.trim() === "")
@@ -629,30 +772,52 @@ export default function (pi: ExtensionAPI) {
         .slice(0, 3)
         .map((x) => x.e);
       const ranked = scored.length ? scored : all.sort((a, b) => b.ts - a.ts).slice(0, 3);
-      const context = ranked.length
-        ? ranked.map((e) => `[${e.cue}] ${e.summary}${e.detail ? " — " + e.detail.slice(0, 160) : ""}`).join("\n")
+      // T10 budget guard: shrink delta if overloaded
+      let deltaRanked = ranked;
+      if (pct !== undefined) {
+        if (pct > BUDGET_STOP_PCT) deltaRanked = [];
+        else if (pct > BUDGET_WARN_PCT) deltaRanked = ranked.slice(0,1);
+      }
+      const context = deltaRanked.length
+        ? compressEpisodes(deltaRanked)
         : "(no relevant episodes — scan current dir: bash ls + read relevant files smart (only relevant) to find context)";
       const recentThinkStrict = deliberations.slice(-1).map((d:any)=>`[think: ${d.goal}] ${d.hypotheses.join("; ")}`).join("\n");
       const thinkBlockStrict = recentThinkStrict ? `\n\nRecent deliberation:\n${recentThinkStrict}` : "";
-      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (plan 2 calls only): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → execute(read→edit 1 file→bash) → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (plan 3 calls only): same flow but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 (update if needed) → retry execute → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + smart read only relevant files to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}${thinkBlockStrict}`;
-      // append active plan if any (ponytail: cached, no sort)
+      // T6: stable systemPrompt + variable delta as separate system message (KV-cache friendly)
       const latestPlan = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
       if (latestPlan) cachedLatestPlan = latestPlan;
       const planBlock = latestPlan ? `\n\nActive plan:\n${renderPlan(latestPlan)}\n(id: ${latestPlan.id})` : "";
-      const strictWithPlan = strictInstruction + planBlock;
-      const sys = typeof ev?.systemPrompt === "string" ? ev.systemPrompt + "\n\n" + strictWithPlan : strictWithPlan;
-      return { systemPrompt: sys } as any;
+      const delta = `Brain episodes for query "${query.slice(0, 120)}":\n${context}${thinkBlockStrict}${planBlock}`;
+      // stable prefix cached, delta varies per turn but doesn't break prefix
+      return { systemPrompt: STRICT_STABLE_PREFIX, message: { role: "system", content: delta } } as any;
     }
-    // default mode: gated light injection — 1 episode + 1 deliberation (was 3+2; strict gets 3 scored)
-    const recent = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 1);
-    const recentThink = deliberations.slice(-1);
+    // default mode: gated light injection — 1 episode gist + 1 deliberation (T3+T8) + budget
     const latestPlanDef = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
     if (latestPlanDef) cachedLatestPlan = latestPlanDef;
+    // pick scored top-1 for default (T8) not just recency
+    let recent: Episode[] = [];
+    if (episodes.size) {
+      const q = (ev?.prompt ?? "") as string;
+      if (q.trim()) {
+        const all = [...episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now());
+        const scored = all.map(e=>({e,s:scoreEpisode(e,q)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,1).map(x=>x.e);
+        recent = scored.length ? scored : [...episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,1);
+      } else {
+        recent = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 1);
+      }
+    }
+    // budget guard: if overloaded skip inject
+    if (pct !== undefined && pct > BUDGET_STOP_PCT) recent = [];
+    const recentThink = deliberations.slice(-1);
     if (!recent.length && !recentThink.length && !latestPlanDef) return;
     const parts: string[] = [];
-    if (recent.length) parts.push(`Recent brain episodes:\n${recent.map((e) => `- ${e.cue}: ${e.summary}`).join("\n")}`);
+    if (recent.length) parts.push(`Recent brain episodes:\n${compressEpisodes(recent)}`);
     if (recentThink.length) parts.push(`Recent deliberations:\n${recentThink.map((d: any) => `- ${d.goal}: ${d.hypotheses.join("; ")}${d.conclusion ? ` => ${d.conclusion}` : ""}`).join("\n")}`);
     if (latestPlanDef) parts.push(`Active plan:\n${renderPlan(latestPlanDef)}\n(id: ${latestPlanDef.id})`);
+    // also respect budget warn: if warn, only 1 block
+    if (pct !== undefined && pct > BUDGET_WARN_PCT && parts.length > 1) {
+      return { message: { role: "system", content: parts[0] } } as any;
+    }
     return { message: { role: "system", content: parts.join("\n\n") } } as any;
   });
 
@@ -675,47 +840,57 @@ export default function (pi: ExtensionAPI) {
     if (changed) return { messages: deduped } as any;
   });
 
-  // T09: hippocampal hooks — auto-encode + consolidation (sleep replay)
+  // T09: hippocampal hooks — auto-encode + consolidation (sleep replay) + T2 filter + T11 feedback
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
     if (ctx?.signal?.aborted) return;
     if (["edit", "write"].includes(ev?.toolName) && !ev?.isError) {
       const cue = `${ev.toolName}:${(ev.input?.path ?? "").toString().slice(0, 30)}`;
       const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
       if (summary) {
-        const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
+        const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
         await (pi as any).appendEntry?.("brain:episode", ep);
         episodes.set(ep.id, ep);
         indexEpisode(ep);
+        recallMemo.clear();
         hasWriteEdit = true;
         hasRemember = false;
-        // ponytail: don't re-arm after plan-done warning — once per dirty cycle
+        // T11 usefulness: edit/write always useful → keep its boost via remember-boost already, but touch not needed
       }
     } else if (ev?.toolName === "bash" && !ev?.isError) {
       const cmd: string = (ev.input?.command ?? "").toString();
-      // ponytail: Rule 7 git commit runs AFTER remember — don't re-arm Rule 5, else duplicate warning after plan done
-      // also covers any post-remember bash when plan already done (cycle closed)
+      const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
+      // T2: skip noise bash
+      const isNoise = isNoiseBash(cmd, output);
+      // T11: usefulness feedback — if success keywords, touch best matching remember episode (reinforce)
+      if (/passed|success|fixed|done|ok/i.test(output) && output.length > 20) {
+        // find best remember episode that shares tokens with cmd
+        const best = [...episodes.values()].filter(e=>e.source==="remember").map(e=>({e,s:scoreBase(e,cmd)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s)[0]?.e;
+        if (best) { best.ts = Date.now(); }
+      }
       if (isPlanDone() && hasRemember) {
-        // still encode but don't mark dirty
+        // still encode but don't mark dirty — but respect noise filter
+        if (isNoise) return;
         const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
+        const summary = output.slice(0, 200);
         if (summary) {
-          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
+          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
           await (pi as any).appendEntry?.("brain:episode", ep);
           episodes.set(ep.id, ep);
           indexEpisode(ep);
+          recallMemo.clear();
         }
       } else {
-        // ponytail: encode all successful bash — heuristic missed tests/lints; one rule, no drift
+        if (isNoise) return;
         const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
+        const summary = output.slice(0, 200);
         if (summary) {
-          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
+          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
           await (pi as any).appendEntry?.("brain:episode", ep);
           episodes.set(ep.id, ep);
           indexEpisode(ep);
+          recallMemo.clear();
           hasWriteEdit = true;
           hasRemember = false;
-          // ponytail: don't re-arm after plan-done warning — once per dirty cycle
         }
       }
     }
@@ -741,10 +916,21 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
-    const ranked = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, COMPACT_LARGE);
-    if (!ranked.length) return;
-    const keep = ranked.length <= 15 ? ranked.slice(0, COMPACT_SMALL) : ranked.slice(0, COMPACT_LARGE);
-    const brain = `Brain episodes:\n${keep.map((e) => `- ${e.cue}: ${e.summary}`).join("\n")}`;
+    // T4 scored compaction (reuse scoreEpisode + deliberation goal)
+    const query = (deliberations[deliberations.length-1] as any)?.goal ?? (cachedLatestPlan?.goal ?? "");
+    let ranked: Episode[];
+    if (query) {
+      ranked = [...episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now()).map(e=>({e,s:scoreEpisode(e,query)})).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).map(x=>x.e);
+      // if all scores 0, fallback to ts
+      if (ranked.every(e=>scoreEpisode(e,query)===0)) ranked = [...episodes.values()].sort((a,b)=>b.ts-a.ts);
+    } else {
+      ranked = [...episodes.values()].sort((a, b) => b.ts - a.ts);
+    }
+    // prefer remember over auto implicitly via sourceBoost already in scoreEpisode
+    const sliced = ranked.slice(0, COMPACT_LARGE);
+    if (!sliced.length) return;
+    const keep = sliced.length <= 15 ? sliced.slice(0, COMPACT_SMALL) : sliced.slice(0, COMPACT_LARGE);
+    const brain = `Brain episodes:\n${compressEpisodes(keep)}`;
     const summary = ev?.summary ? `${brain}\n\n${ev.summary}` : brain;
     return { summary } as any;
   });
@@ -806,6 +992,12 @@ export default function (pi: ExtensionAPI) {
       const old: Episode = { id: "y", cue: "test", summary: "test", ts: Date.now() - 14*86400000, source: "remember" };
       const fresh: Episode = { id: "z", cue: "test", summary: "test", ts: Date.now(), source: "remember" };
       console.assert(scoreEpisode(fresh, "test") > scoreEpisode(old, "test"), "half-life failed");
+      // T1: remember outranks auto even when older
+      const oldRem: Episode = { id:"r", cue:"deploy", summary:"deploy fix", ts: Date.now()-7*86400000, source:"remember"};
+      const freshAuto: Episode = { id:"a", cue:"deploy", summary:"deploy fix", ts: Date.now(), source:"auto"};
+      console.assert(scoreEpisode(oldRem,"deploy") > scoreEpisode(freshAuto,"deploy")*0.8, "remember boost failed");
+      // T1 audit decay exempt
+      console.assert(scoreBase(oldRem,"deploy") >= 3, "scoreBase should be >=3 for exact cue");
       console.log("pi-brain demo: ok");
     }) as any;
     void _demo;
