@@ -628,13 +628,13 @@ export default function (pi: ExtensionAPI) {
         .map((e) => ({ e, s: scoreEpisode(e, query) }))
         .filter((x) => x.s > 0 || query.trim() === "")
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
-        .slice(0, 5)
+        .slice(0, 3)
         .map((x) => x.e);
-      const ranked = scored.length ? scored : all.sort((a, b) => b.ts - a.ts).slice(0, 5);
+      const ranked = scored.length ? scored : all.sort((a, b) => b.ts - a.ts).slice(0, 3);
       const context = ranked.length
         ? ranked.map((e) => `[${e.cue}] ${e.summary}${e.detail ? " — " + e.detail.slice(0, 160) : ""}`).join("\n")
-        : "(no episodes yet — brain is empty)";
-      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy: recall → think → [synthesize/combine if novel] → plan → execute(read→edit 1 file→bash) → plan.done → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy: same flow, but on ANY failure (read/edit/write/bash error, non-zero exit) you MUST call think{goal:"debug <failed Task N>", hypotheses:[root cause, fix approach]} before retry, then update plan{id,done} and retry. Execution is blocked until debug-think is done.\n\n1. Recall-first: answer ONLY from episodes below. Cite cue(s). If none relevant → "No relevant brain episode — try /pi-brain off or add with remember."\n2. Think-before-act: you MUST call think{goal,hypotheses} before any write/edit (enforced — write will be blocked otherwise).\n3. Combine-only-for-novelty: call synthesize/combine when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ synthesize/combine if used), call plan{goal,tasks[]} to create [ ] checklist, then mark [x] via plan{id,done} as you execute.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}`;
+        : "(no relevant episodes — scan current dir: bash ls + read relevant files smart (only relevant) to find context)";
+      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy: recall (top-3) → think (smart reads) → [synthesize/combine if novel] → plan → execute(read→edit 1 file→bash) → plan.done → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy: same flow, but on ANY failure (read/edit/write/bash error, non-zero exit) you MUST call think{goal:"debug <failed Task N>", hypotheses:[root cause, fix approach]} before retry, then update plan{id,done} and retry. Execution is blocked until debug-think is done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + smart read only relevant files to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Combine-only-for-novelty: call synthesize/combine when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (with smart reads + synthesize/combine if used) and after gathering all required info, call plan{goal,tasks[]} to create [ ] checklist, then mark [x] via plan{id,done} as you execute.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}`;
       // append active plan if any (ponytail: cached, no sort)
       const latestPlan = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
       if (latestPlan) cachedLatestPlan = latestPlan;
@@ -643,7 +643,7 @@ export default function (pi: ExtensionAPI) {
       const sys = typeof ev?.systemPrompt === "string" ? ev.systemPrompt + "\n\n" + strictWithPlan : strictWithPlan;
       return { systemPrompt: sys } as any;
     }
-    // default mode: gated light injection — 1 episode + 1 deliberation (was 3+2; strict gets 5 scored)
+    // default mode: gated light injection — 1 episode + 1 deliberation (was 3+2; strict gets 3 scored)
     const recent = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 1);
     const recentThink = deliberations.slice(-1);
     const latestPlanDef = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
