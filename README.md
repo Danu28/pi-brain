@@ -24,7 +24,7 @@ Manual: copy `pi-brain/` to either location above.
 | `recall` | TF-IDF recall by cue, ranked |
 | `think` | PFC scratchpad `goal + hypotheses[1..3]` |
 | `creative-thinking` | fuse 2–3 cues + latest think |
-| `plan` | ordered tasklist `goal + tasks[]`, update via `id+done` |
+| `plan` | ordered tasklist `goal + tasks[]`, update via `id+done` (batch `done:[0,1]` in one call for fast flows) |
 | `habit` | scaffold `.pi/skills/brain-<name>/SKILL.md` |
 | `brain_status` | count + token usage, overload signal |
 | `/pi-brain on|off|status` | strict recall-only vs default |
