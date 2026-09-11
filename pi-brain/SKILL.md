@@ -51,6 +51,16 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 - Compaction injects top 3 if <15 else 5; overload keeps 5.
 - `context` dedups duplicate episode blocks then prunes >40 msgs / >30KB → system + last 20.
 
+## Pi Default Tools (pi-brain must know)
+
+- `read {path, offset?, limit?}` — read text/image (50KB/2000 lines cap), use offset/limit to page large files
+- `write {path, content}` — create/overwrite file, auto-creates dirs
+- `edit {path, edits:[{oldText,newText}]}` — exact unique `oldText`, non-overlapping edits, merge nearby lines, one file per call
+- `bash {command, timeout?}` — shell (`ls`, `grep`, `find`, `git`, verify), output truncated 50KB
+- Custom tools — any `pi.registerTool {name, parameters}` — call by `name` with matching params (discover via skill list/recall)
+
+Rule: `read` target first → `edit` one file → `bash` verify. Prefer `edit` over `write` for patches, `read` before edit, `bash` only for checks/git.
+
 ## Calibration knobs (top of index.ts)
 
 `MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.95`, `DEFAULT_INJECT_COUNT=1`, `DEFAULT_INJECT_SCORED=2`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change.
