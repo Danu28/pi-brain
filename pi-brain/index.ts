@@ -83,6 +83,10 @@ export default function (pi: ExtensionAPI) {
   // plan — ordered tasklist after think (ponytail: one Map, no class)
   const plans = new Map<string, Plan>();
   const renderPlan = (p: Plan) => `${p.goal}\n` + p.tasks.map((t, i) => `${t.done ? "[x]" : "[ ]"} Task ${i + 1}: ${t.title}`).join("\n");
+  const isPlanDone = (): boolean => {
+    const p = cachedLatestPlan ?? [...plans.values()].sort((a, b) => b.ts - a.ts)[0] ?? null;
+    return !!p && p.tasks.length > 0 && p.tasks.every((t) => t.done);
+  };
 
   // T03: TUI renderer for brain:episode — collapsed cue, expanded detail (not in LLM context)
   try {
@@ -550,7 +554,7 @@ export default function (pi: ExtensionAPI) {
         episodes.set(ep.id, ep);
         hasWriteEdit = true;
         hasRemember = false;
-        rule5Warned = false;
+        // ponytail: don't re-arm after plan-done warning — once per dirty cycle
       }
     } else if (ev?.toolName === "bash" && !ev?.isError) {
       // ponytail: encode all successful bash — heuristic missed tests/lints; one rule, no drift
@@ -563,7 +567,7 @@ export default function (pi: ExtensionAPI) {
         episodes.set(ep.id, ep);
         hasWriteEdit = true;
         hasRemember = false;
-        rule5Warned = false;
+        // ponytail: don't re-arm after plan-done warning — once per dirty cycle
       }
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
@@ -629,21 +633,18 @@ export default function (pi: ExtensionAPI) {
     // hasRemember now set in tool_result (post-success) — not here
   });
 
-  // Rule 5: encode-or-it-didn't-happen — nudge at turn/agent end (debounced: once per dirty cycle)
+  // Rule 5: encode-or-it-didn't-happen — once after plan done (not per-turn)
   pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
-    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned) {
+    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned && isPlanDone()) {
       rule5Warned = true;
       try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
     }
   });
   pi.on("agent_end" as any, async (_ev: any, ctx: any) => {
-    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned) {
+    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned && isPlanDone()) {
       rule5Warned = true;
-      // last chance hint; also surface as tool_result-style nudge for LLM
       try { ctx?.ui?.notify?.("Strict Rule 5: agent ended with unencoded changes — call remember now.", "warning"); } catch {}
     }
-    // keep hasWriteEdit until remember clears it; only reset warn flag for next agent
-    // (hasWriteEdit/hasRemember are reset in before_agent_start)
   });
 
   // before_provider_request deleted — merged into context dedup+trim (one prune, not two)
