@@ -139,17 +139,43 @@ export default function (pi: ExtensionAPI) {
     try { (pi as any)._brainStrict = brainStrict; } catch {}
   });
 
-  // T05: remember — explicit encoding
+  // T05: remember — explicit encoding with pre-write audit (smart notebook)
   pi.registerTool({
     name: "remember",
     label: "Remember",
-    description: "Explicitly encode an episode to brain memory (hippocampus). Use cue as associative key.",
+    description: "Explicitly encode an episode to brain memory (hippocampus). Use cue as associative key. Audits before write: exact cue → upsert, similar (score≥3) → preview + needs force:true.",
     parameters: Type.Object({
       cue: Type.String({ description: "Associative cue (short key for recall)" }),
       summary: Type.String({ description: "One-line summary of episode" }),
       detail: Type.Optional(Type.String({ description: "Optional detail" })),
+      force: Type.Optional(Type.Boolean({ description: "Force encode even if similar episodes exist (skip audit block)" })),
     }),
     async execute(_id, params, _signal, _onUpdate, _ctx) {
+      const cueNorm = params.cue.trim().toLowerCase();
+      // ponytail: exact cue → upsert (no dup), reuse scoring for similarity check
+      const exact = [...episodes.values()].find((e) => e.cue.trim().toLowerCase() === cueNorm);
+      if (exact && !params.force) {
+        // upsert: update existing instead of creating duplicate
+        exact.summary = truncate(params.summary);
+        if (params.detail) exact.detail = truncate(params.detail);
+        exact.ts = Date.now();
+        exact.source = "remember";
+        await (pi as any).appendEntry?.("brain:episode", exact);
+        episodes.set(exact.id, exact);
+        (pi as any).events?.emit?.("brain:episode:encoded", exact);
+        return { content: [{ type: "text", text: `Updated (audit: exact cue exists) ${exact.id} — was duplicate cue, merged instead of new` }], details: { id: exact.id, episode: exact, audit: "exact-cue-upsert" } };
+      }
+      // similarity audit: reuse scoreEpisode (TF-IDF lite) against cue+summary
+      const query = `${params.cue} ${params.summary}`;
+      const scored = [...episodes.values()]
+        .map((e) => ({ e, s: scoreEpisode(e, query) }))
+        .filter((x) => x.s >= 3)
+        .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
+        .slice(0, 3);
+      if (scored.length && !params.force && !exact) {
+        const preview = scored.map((x) => `[${x.e.cue}] ${x.e.summary} (score:${x.s.toFixed(1)})`).join("\n");
+        return { content: [{ type: "text", text: `Audit: ${scored.length} similar episode(s) found — not encoded.\n${preview}\n→ To update existing, reuse its cue. To force new, call remember again with force:true` }], details: { audit: "similar-found", similar: scored.map((x) => ({ episode: x.e, score: x.s })), blocked: true } } as any;
+      }
       const ep: Episode = {
         id: `${params.cue.replace(/[^a-z0-9-]/gi,"-").slice(0,30)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,
         cue: truncate(params.cue),
@@ -161,7 +187,7 @@ export default function (pi: ExtensionAPI) {
       await (pi as any).appendEntry?.("brain:episode", ep);
       episodes.set(ep.id, ep);
       (pi as any).events?.emit?.("brain:episode:encoded", ep);
-      return { content: [{ type: "text", text: `Encoded ${ep.id}` }], details: { id: ep.id, episode: ep } };
+      return { content: [{ type: "text", text: `Encoded ${ep.id}` }], details: { id: ep.id, episode: ep, audit: scored.length ? "forced" : "clean" } };
     },
   });
 
