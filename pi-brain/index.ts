@@ -198,6 +198,15 @@ function scoreEpisode(e: Episode, query: string, filterTags?: string[]): number 
   return base * decay * sourceBoost(e);
 }
 
+// ponytail: plan 3-10 guard as pure fn — schema bounds fire before execute (raw typebox error, no guidance)
+function planTaskError(tasks: string[]): string | undefined {
+  if (tasks.length < 3) return `plan requires ≥3 detailed tasks (got ${tasks.length}) — split into 3-10 well-structured steps. Example: ["analyze requirement & existing code","update index.ts core logic","update docs & verify"]`;
+  if (tasks.length > 10) return `plan got ${tasks.length} tasks — max 10. Chunk it: create with the first 10, then append plan{id:"<id>", tasks:["remaining…"]}. Or merge related steps.`;
+  const short = tasks.filter((t) => t.trim().length < 10);
+  if (short.length) return `plan tasks must be detailed (≥10 chars each) — short: "${short[0].slice(0,30)}" — make each concrete and actionable (what file, what change)`;
+  return undefined;
+}
+
 export default function (pi: ExtensionAPI) {
   // hippocampus — durable, branch-scoped
   const episodes = new Map<string, Episode>();
@@ -629,7 +638,7 @@ export default function (pi: ExtensionAPI) {
     description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). Requires 3-10 well-split tasks that match user requirement — detailed enough that execution is easy. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
     parameters: Type.Object({
       goal: Type.Optional(Type.String({ description: "Plan goal (e.g. creative login page)" })),
-      tasks: Type.Optional(Type.Array(Type.String(), { description: "Detailed ordered tasks (3-10, well-split to match requirement — each task concrete and actionable)", minItems: 3, maxItems: 10 })),
+      tasks: Type.Optional(Type.Array(Type.String(), { description: "Detailed ordered tasks (3-10, well-split; >10 → chunk via plan{id,tasks:[...]}). Validation in executor for actionable errors." })),
       id: Type.Optional(Type.String({ description: "Existing plan id to update" })),
       done: Type.Optional(Type.Array(Type.Number({ minimum: 0 }), { description: "Indices to mark done (0-based)" })),
       hypotheses: Type.Optional(Type.Array(Type.String(), { description: "Single-shot hypotheses (auto-creates think)", minItems: 1, maxItems: 3 })),
@@ -668,9 +677,8 @@ export default function (pi: ExtensionAPI) {
       }
       // create new plan — ponytail: collision-free id, no goal slop — enforce detailed 3-10 split
       if (!params.goal || !params.tasks?.length) return { content: [{ type: "text", text: "plan: goal and tasks required for new plan (use id+done to update)" }], details: { error: "missing goal/tasks" } } as any;
-      if (params.tasks.length < 3) return { content: [{ type: "text", text: `plan requires ≥3 detailed tasks (got ${params.tasks.length}) — split the requirement into 3-10 well-structured steps so execution is easy. Example: ["analyze requirement & existing code","update index.ts core logic","update docs & verify"]` }], details: { error: "too few tasks" } } as any;
-      const shortTasks = params.tasks.filter((t: string)=>t.trim().length < 10);
-      if (shortTasks.length) return { content: [{ type: "text", text: `plan tasks must be detailed (≥10 chars each) — short: "${shortTasks[0].slice(0,30)}" — make each task concrete and actionable (what file, what change)` }], details: { error: "tasks not detailed" } } as any;
+      const taskErr = planTaskError(params.tasks);
+      if (taskErr) return { content: [{ type: "text", text: taskErr }], details: { error: "invalid tasks", count: params.tasks.length } } as any;
       const pl: Plan = {
         id: `brain-plan:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,
         goal: truncate(params.goal),
@@ -1033,6 +1041,10 @@ export default function (pi: ExtensionAPI) {
       console.assert(scoreBase(tagEp,"", ["infra"]) > 0, "tag-only recall failed");
       console.assert(parseSince("7d") !== undefined, "since 7d parse failed");
       console.assert(expandTokens(tokenize("database")).includes("database"), "SYN db failed");
+      // ponytail: plan count guard — <3 rejected, valid ok, >10 gets chunk hint
+      console.assert(planTaskError(["a","b"]) !== undefined, "plan <3 not rejected");
+      console.assert(planTaskError(["1234567890","1234567890","1234567890"]) === undefined, "plan valid wrongly rejected");
+      console.assert((planTaskError(Array.from({length:11},(_,i)=>`task ${i} long enough`)) ?? "").includes("Chunk it"), "plan >10 missing chunk hint");
       console.log("pi-brain demo: ok");
     }) as any;
     void _demo;
