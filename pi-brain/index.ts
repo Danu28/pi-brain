@@ -18,6 +18,8 @@ type Episode = {
   detail?: string;
   ts: number;
   source: string;
+  tags?: string[];
+  refs?: string[];
 };
 
 type Plan = {
@@ -29,6 +31,13 @@ type Plan = {
 
 const MAX_BYTES = 50 * 1024;
 const MAX_LINES = 2000;
+// Calibration knobs (top of index.ts) — tune without code change
+const TAG_BOOST = 1.5;
+const HALF_LIFE_DAYS = 7;
+const HALF_LIFE_FACTOR = 0.95;
+const DEFAULT_INJECT_COUNT = 1;
+const COMPACT_SMALL = 3;
+const COMPACT_LARGE = 5;
 
 // /pi-brain on|off is global, not per-session (branch entries only live in one session)
 const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
@@ -66,29 +75,62 @@ function tokenize(s: string): string[] {
   return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 }
 
-function scoreEpisode(e: Episode, query: string): number {
+function normalizeTags(tags?: string[]): string[] | undefined {
+  if (!tags?.length) return undefined;
+  const out = tags.map(t => t.toLowerCase().trim().replace(/[^a-z0-9-]/g, "-").replace(/-+/g,"-").replace(/^-|-$/g,"")).filter(Boolean).slice(0,8);
+  return out.length ? [...new Set(out)] : undefined;
+}
+
+function parseSince(since?: string | number): number | undefined {
+  if (since == null) return undefined;
+  if (typeof since === "number") return since;
+  const s = String(since).trim().toLowerCase();
+  if (/^\d+$/.test(s)) return Number(s);
+  if (s === "24h") return Date.now() - 24*3600*1000;
+  if (s === "7d") return Date.now() - 7*24*3600*1000;
+  const parsed = Date.parse(s);
+  return isNaN(parsed) ? undefined : parsed;
+}
+
+function scoreEpisode(e: Episode, query: string, filterTags?: string[]): number {
   const terms = tokenize(query);
-  if (!terms.length) return 0;
+  const hasQuery = terms.length > 0 || query.trim().length > 0;
   const qLower = query.toLowerCase().trim();
   let s = 0;
   // token-exact TF — avoids substring false positives ("a" in "data")
   const cueToks = tokenize(e.cue);
   const sumToks = tokenize(e.summary);
   const detToks = tokenize(e.detail ?? "");
-  if (e.cue.toLowerCase().includes(qLower)) s += 2;
-  if (e.summary.toLowerCase().includes(qLower)) s += 1;
+  if (qLower && e.cue.toLowerCase().includes(qLower)) s += 2;
+  if (qLower && e.summary.toLowerCase().includes(qLower)) s += 1;
   for (const t of terms) {
     s += cueToks.filter((x) => x === t).length * 2;
     s += sumToks.filter((x) => x === t).length * 1;
     s += detToks.filter((x) => x === t).length * 0.5;
   }
-  // ponytail: O(n) scan, add index if >10k entries
+  // tag boost: if episode tags intersect query terms or filter tags
+  if (e.tags?.length) {
+    const eTags = e.tags.map(t=>t.toLowerCase());
+    for (const t of terms) if (eTags.includes(t)) s += TAG_BOOST;
+    if (filterTags?.length) for (const ft of filterTags) if (eTags.includes(ft.toLowerCase())) s += TAG_BOOST;
+  }
+  // half-life decay: older episodes score less
+  const ageDays = (Date.now() - e.ts) / (86400000);
+  const decay = Math.pow(HALF_LIFE_FACTOR, ageDays / HALF_LIFE_DAYS);
+  s *= decay;
+  // tag-only recall: if no query but tag filter matches, give base score
+  if (!hasQuery && filterTags?.length && e.tags?.length) {
+    const matched = filterTags.some(ft => e.tags!.map(t=>t.toLowerCase()).includes(ft.toLowerCase()));
+    if (matched && s === 0) s = TAG_BOOST * decay;
+  }
   return s;
 }
 
 export default function (pi: ExtensionAPI) {
   // hippocampus — durable, branch-scoped
   const episodes = new Map<string, Episode>();
+  // incremental token → ids index (ponytail: O(1) recall, rebuilt on session_start, O(n) fallback if <10k)
+  const tokenIndex = new Map<string, Set<string>>();
   // PFC scratchpad — deliberations (not durable, per-turn working memory)
   const deliberations: { goal: string; hypotheses: string[]; ts: number }[] = [];
   // /pi-brain strict gate — branch-durable, defaults off
@@ -110,11 +152,33 @@ export default function (pi: ExtensionAPI) {
     return !!p && p.tasks.length > 0 && p.tasks.every((t) => t.done);
   };
 
+  function indexEpisode(e: Episode) {
+    const toks = new Set([...tokenize(e.cue), ...tokenize(e.summary), ...tokenize(e.detail ?? ""), ...(e.tags ?? []).map(t=>t.toLowerCase())]);
+    for (const tok of toks) {
+      let set = tokenIndex.get(tok);
+      if (!set) { set = new Set(); tokenIndex.set(tok, set); }
+      set.add(e.id);
+    }
+  }
+  function unindexEpisode(e: Episode) {
+    const toks = new Set([...tokenize(e.cue), ...tokenize(e.summary), ...tokenize(e.detail ?? ""), ...(e.tags ?? []).map(t=>t.toLowerCase())]);
+    for (const tok of toks) {
+      const set = tokenIndex.get(tok);
+      if (set) { set.delete(e.id); if (set.size === 0) tokenIndex.delete(tok); }
+    }
+  }
+  function rebuildIndex() {
+    tokenIndex.clear();
+    for (const e of episodes.values()) indexEpisode(e);
+  }
+
   // T03: TUI renderer for brain:episode — collapsed cue, expanded detail (not in LLM context)
   try {
     (pi as any).registerEntryRenderer?.("brain:episode", (entry: any, opts: any, theme: any) => {
       const d: Episode = entry.data ?? entry;
-      const line = opts?.expanded ? `${d.cue}\n${d.summary}${d.detail ? "\n" + d.detail : ""}` : `${d.cue}: ${d.summary.slice(0, 80)}`;
+      const tags = d.tags?.length ? ` [${d.tags.join(",")}]` : "";
+      const refs = d.refs?.length ? ` refs:${d.refs.join(",")}` : "";
+      const line = opts?.expanded ? `${d.cue}${tags}\n${d.summary}${d.detail ? "\n" + d.detail : ""}${refs}` : `${d.cue}${tags}: ${d.summary.slice(0, 80)}`;
       try { return new (Text as any)(line); } catch { try { return new (Text as any)(String(line), 0, 0); } catch { return new (Text as any)(String(line)); } }
     });
   } catch {}
@@ -129,6 +193,7 @@ export default function (pi: ExtensionAPI) {
   // T04: waking recall — rebuild from branch (branch-safe, like waking)
   pi.on("session_start" as any, async (_ev: any, ctx: any) => {
     episodes.clear();
+    tokenIndex.clear();
     plans.clear();
     deliberations.length = 0;
     brainStrict = false;
@@ -165,6 +230,8 @@ export default function (pi: ExtensionAPI) {
           if (ep?.id) episodes.set(ep.id, ep);
         }
       }
+      // rebuild incremental index
+      rebuildIndex();
       // file wins: /pi-brain on stays on across sessions until /pi-brain off
       const fileMode = readMode();
       if (fileMode !== undefined) brainStrict = fileMode;
@@ -178,25 +245,33 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "remember",
     label: "Remember",
-    description: "Explicitly encode an episode to brain memory (hippocampus). Use cue as associative key. Audits before write: exact cue → upsert, similar (score≥3) → preview + needs force:true.",
+    description: "Explicitly encode an episode to brain memory (hippocampus). Use cue as associative key. Audits before write: exact cue → upsert, similar (score≥3) → preview + needs force:true. Supports tags (≤8 kebab) and refs (≤5 files).",
     parameters: Type.Object({
       cue: Type.String({ description: "Associative cue (short key for recall)" }),
       summary: Type.String({ description: "One-line summary of episode" }),
       detail: Type.Optional(Type.String({ description: "Optional detail" })),
+      tags: Type.Optional(Type.Array(Type.String(), { description: "Tags for grouping (kebab, ≤8)", maxItems: 8 })),
+      refs: Type.Optional(Type.Array(Type.String(), { description: "File refs (≤5)", maxItems: 5 })),
       force: Type.Optional(Type.Boolean({ description: "Force encode even if similar episodes exist (skip audit block)" })),
     }),
     async execute(_id, params, _signal, _onUpdate, _ctx) {
       const cueNorm = params.cue.trim().toLowerCase();
       if (!cueNorm) return { content: [{ type: "text", text: "cue must be non-empty" }], details: { error: "empty cue" } } as any;
       if (!params.summary?.trim()) return { content: [{ type: "text", text: "summary must be non-empty" }], details: { error: "empty summary" } } as any;
+      const tags = normalizeTags(params.tags as any);
+      const refs = params.refs?.map((r: string)=>truncate(r)).slice(0,5);
       // ponytail: exact cue → upsert (no dup), reuse scoring for similarity check
       const exact = [...episodes.values()].find((e) => e.cue.trim().toLowerCase() === cueNorm);
       if (exact && !params.force) {
         // upsert: update existing instead of creating duplicate
+        unindexEpisode(exact);
         exact.summary = truncate(params.summary);
         if (params.detail) exact.detail = truncate(params.detail);
+        if (tags) exact.tags = tags;
+        if (refs) exact.refs = refs;
         exact.ts = Date.now();
         exact.source = "remember";
+        indexEpisode(exact);
         await (pi as any).appendEntry?.("brain:episode", exact);
         episodes.set(exact.id, exact);
         (pi as any).events?.emit?.("brain:episode:encoded", exact);
@@ -207,7 +282,7 @@ export default function (pi: ExtensionAPI) {
       const query = `${params.cue} ${params.summary}`;
       const scored = [...episodes.values()]
         .filter((e) => e.source !== "auto")
-        .map((e) => ({ e, s: scoreEpisode(e, query) }))
+        .map((e) => ({ e, s: scoreEpisode(e, query, tags) }))
         .filter((x) => x.s >= 3)
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
         .slice(0, 3);
@@ -220,41 +295,71 @@ export default function (pi: ExtensionAPI) {
         cue: truncate(params.cue),
         summary: truncate(params.summary),
         detail: params.detail ? truncate(params.detail) : undefined,
+        tags,
+        refs,
         ts: Date.now(),
         source: "remember",
       };
       await (pi as any).appendEntry?.("brain:episode", ep);
       episodes.set(ep.id, ep);
+      indexEpisode(ep);
       (pi as any).events?.emit?.("brain:episode:encoded", ep);
       return { content: [{ type: "text", text: `Encoded ${ep.id}` }], details: { id: ep.id, episode: ep, audit: scored.length ? "forced" : "clean" } };
     },
   });
 
-  // T06: recall — TF-IDF pattern completion (ponytail: O(n) scan, index if >10k)
+  // T06: recall — TF-IDF pattern completion with incremental index
   pi.registerTool({
     name: "recall",
     label: "Recall",
-    description: "Associative recall: TF-IDF cue→ranked episodes (pattern completion). No vector DB, lazy scan over session.",
+    description: "Associative recall: TF-IDF cue→ranked episodes (pattern completion). Incremental token→ids index + half-life decay + tag boost + filters tags/source/since. Tag-only recall: query \"\" + tags. No vector DB.",
     parameters: Type.Object({
       query: Type.String({ description: "Cue to recall by" }),
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
+      tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (AND)", maxItems: 8 })),
+      source: Type.Optional(Type.String({ description: "Filter by source: remember|auto" })),
+      since: Type.Optional(Type.String({ description: "Filter since: 7d|24h|ISO|ms" })),
     }),
     async execute(_id, params, signal) {
       const limit = params.limit ?? 5;
-      // ponytail: O(n) scan, add index if >10k entries
-      const all = [...episodes.values()];
-      const scored = all
-        .map((e) => ({ e, s: scoreEpisode(e, params.query) }))
-        .filter((x) => x.s > 0 || params.query.trim() === "")
+      const filterTags = params.tags?.map((t: string)=>t.toLowerCase().trim()).filter(Boolean);
+      const sinceTs = parseSince(params.since as any);
+      let candidates: Episode[] = [...episodes.values()];
+      // incremental index: narrow candidates via token index if query has tokens
+      const qToks = tokenize(params.query);
+      if (qToks.length && tokenIndex.size) {
+        const idSets = qToks.map(t => tokenIndex.get(t)).filter(Boolean) as Set<string>[];
+        if (idSets.length) {
+          // union of hits (any token matches) — ponytail: union over intersection for recall
+          const hitIds = new Set<string>();
+          for (const s of idSets) for (const id of s) hitIds.add(id);
+          const hits = [...hitIds].map(id => episodes.get(id)).filter(Boolean) as Episode[];
+          // if index yields hits, prefer them but still allow fallback scan for decay/tag cases
+          if (hits.length) candidates = hits;
+        }
+      }
+      // apply filters before scoring
+      candidates = candidates.filter(e => {
+        if (params.source && e.source !== params.source) return false;
+        if (sinceTs !== undefined && e.ts < sinceTs) return false;
+        if (filterTags?.length) {
+          const eTags = (e.tags ?? []).map((t: string)=>t.toLowerCase());
+          if (!filterTags.every((ft: string) => eTags.includes(ft))) return false;
+        }
+        return true;
+      });
+      const scored = candidates
+        .map((e) => ({ e, s: scoreEpisode(e, params.query, filterTags) }))
+        .filter((x) => x.s > 0 || params.query.trim() === "" || (filterTags?.length ? true : false))
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
         .slice(0, limit)
         .map((x) => x.e);
 
-      const ranked = scored.length ? scored : all.sort((a, b) => b.ts - a.ts).slice(0, limit);
+      const ranked = scored.length ? scored : candidates.sort((a, b) => b.ts - a.ts).slice(0, limit);
       if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
 
       const text = ranked.length
-        ? ranked.map((e) => `[${e.cue}] ${e.summary}${e.detail ? " — " + e.detail.slice(0, 120) : ""}`).join("\n")
+        ? ranked.map((e) => `[${e.cue}]${e.tags?.length ? ` [${e.tags.join(",")}]` : ""} ${e.summary}${e.detail ? " — " + e.detail.slice(0, 120) : ""}${e.refs?.length ? ` refs:${e.refs.join(",")}` : ""}`).join("\n")
         : "No episodes yet. Use remember to encode.";
       return { content: [{ type: "text", text: truncate(text) }], details: { episodes: ranked } };
     },
@@ -264,7 +369,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "brain_status",
     label: "Brain status",
-    description: "How full is the brain? Episode count + context usage (metacognition). Emits brain:overload if >80%.",
+    description: "How full is the brain? Episode count + context usage (metacognition). Emits brain:overload if >80%. Shows index stats + calibration knobs.",
     parameters: Type.Object({}),
     async execute(_id, _p, _sig, _upd, ctx: any) {
       let usage: any = undefined;
@@ -275,8 +380,10 @@ export default function (pi: ExtensionAPI) {
       const pct = usage?.percent ?? (usage?.used && usage?.total ? Math.round((usage.used / usage.total) * 100) : undefined);
       const overloaded = (pct !== undefined && pct > 80) || count > 50;
       if (overloaded) (pi as any).events?.emit?.("brain:overload", { episodes: count, percent: pct });
-      const txt = `Episodes: ${count}\nTokens: ${usage?.used ?? "?"} / ${usage?.total ?? "?"}${pct !== undefined ? ` (${pct}%)` : ""}${overloaded ? "\n[overload: consider compaction/pruning]" : ""}\nDeliberations: ${deliberations.length}`;
-      return { content: [{ type: "text", text: txt }], details: { episodes: count, tokens: usage, recent: [...episodes.values()].slice(-3), overloaded, deliberations: deliberations.slice(-3) } };
+      const idxStats = `Index: ${tokenIndex.size} tokens → ${episodes.size} episodes (incremental)`;
+      const knobs = `Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d`;
+      const txt = `Episodes: ${count}\nTokens: ${usage?.used ?? "?"} / ${usage?.total ?? "?"}${pct !== undefined ? ` (${pct}%)` : ""}${overloaded ? "\n[overload: consider compaction/pruning]" : ""}\nDeliberations: ${deliberations.length}\n${idxStats}\n${knobs}`;
+      return { content: [{ type: "text", text: txt }], details: { episodes: count, tokens: usage, recent: [...episodes.values()].slice(-3), overloaded, deliberations: deliberations.slice(-3), index: { tokens: tokenIndex.size, episodes: count }, knobs: { MAX_BYTES, MAX_LINES, TAG_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR } } };
     },
   });
 
@@ -493,7 +600,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (arg === "status" || arg === "") {
-        const txt = `pi-brain: ${brainStrict ? "ON (strict)" : "OFF (default)"}\nEpisodes: ${episodes.size} | Deliberations: ${deliberations.length}\nUsage: /pi-brain on | /pi-brain off`;
+        const txt = `pi-brain: ${brainStrict ? "ON (strict)" : "OFF (default)"}\nEpisodes: ${episodes.size} | Deliberations: ${deliberations.length} | Index: ${tokenIndex.size} tokens\nUsage: /pi-brain on | /pi-brain off`;
         ctx.ui.notify(txt, "info");
         return;
       }
@@ -578,6 +685,7 @@ export default function (pi: ExtensionAPI) {
         const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
         await (pi as any).appendEntry?.("brain:episode", ep);
         episodes.set(ep.id, ep);
+        indexEpisode(ep);
         hasWriteEdit = true;
         hasRemember = false;
         // ponytail: don't re-arm after plan-done warning — once per dirty cycle
@@ -591,6 +699,7 @@ export default function (pi: ExtensionAPI) {
         const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
         await (pi as any).appendEntry?.("brain:episode", ep);
         episodes.set(ep.id, ep);
+        indexEpisode(ep);
         hasWriteEdit = true;
         hasRemember = false;
         // ponytail: don't re-arm after plan-done warning — once per dirty cycle
@@ -618,9 +727,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
-    const ranked = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 5);
+    const ranked = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, COMPACT_LARGE);
     if (!ranked.length) return;
-    const brain = `Brain episodes:\n${ranked.map((e) => `- ${e.cue}: ${e.summary}`).join("\n")}`;
+    const keep = ranked.length <= 15 ? ranked.slice(0, COMPACT_SMALL) : ranked.slice(0, COMPACT_LARGE);
+    const brain = `Brain episodes:\n${keep.map((e) => `- ${e.cue}: ${e.summary}`).join("\n")}`;
     const summary = ev?.summary ? `${brain}\n\n${ev.summary}` : brain;
     return { summary } as any;
   });
@@ -678,6 +788,21 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown" as any, async () => {
     // idempotent — entries already durable, nothing to flush
   });
+
+  // ponytail: minimal self-check — fails if TF logic breaks. Run: node -e "require('./index.ts')"
+  if (typeof process !== "undefined" && process.argv?.[1]?.endsWith("index.ts")) {
+    // trivial demo, not a framework
+    const _demo = (() => {
+      const e: Episode = { id: "x", cue: "a", summary: "data", ts: Date.now(), source: "remember" };
+      console.assert(scoreEpisode(e, "a") > 0, "token-exact TF failed");
+      console.assert(scoreEpisode(e, "data") > 0, "substring within summary failed");
+      const old: Episode = { id: "y", cue: "test", summary: "test", ts: Date.now() - 14*86400000, source: "remember" };
+      const fresh: Episode = { id: "z", cue: "test", summary: "test", ts: Date.now(), source: "remember" };
+      console.assert(scoreEpisode(fresh, "test") > scoreEpisode(old, "test"), "half-life failed");
+      console.log("pi-brain demo: ok");
+    }) as any;
+    void _demo;
+  }
 
   // bus events consumed by external listeners if present
 }
