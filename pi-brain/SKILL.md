@@ -30,7 +30,7 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 
 ## Command
 
-- `/pi-brain on` — strict mode: all queries answered **only** from brain episodes (scored recall injected + systemPrompt clamp; no external knowledge). Persisted as `brain:mode` entry, survives fork/resume.
+- `/pi-brain on` — strict mode: all queries answered **only** from brain episodes (scored recall injected + systemPrompt clamp; no external knowledge). Persisted to `$PI_CODING_AGENT_DIR/pi-brain.json` (default `~/.pi/agent/pi-brain.json`) + `brain:mode` branch entry — stays on across sessions until `/pi-brain off`; file wins over branch on `session_start`.
 - `/pi-brain off` — default pi behavior (relevance-gated 1–2 injection).
 - `/pi-brain status` (or bare `/pi-brain`) — dashboard table: episodes, deliberations, plan, tokens, overload, recent cues, index stats.
 

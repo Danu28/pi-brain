@@ -3,6 +3,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 // @ts-ignore - tui resolved by pi runtime
 import { Text } from "@earendil-works/pi-tui";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 // pi-brain — human brain → pi extension
 // 5-step: Question→Delete→Simplify→Accelerate→Automate
@@ -26,6 +29,25 @@ type Plan = {
 
 const MAX_BYTES = 50 * 1024;
 const MAX_LINES = 2000;
+
+// /pi-brain on|off is global, not per-session (branch entries only live in one session)
+const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
+
+function readMode(): boolean | undefined {
+  try {
+    const v = JSON.parse(readFileSync(MODE_FILE, "utf8"));
+    return typeof v?.enabled === "boolean" ? v.enabled : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeMode(enabled: boolean) {
+  try {
+    mkdirSync(dirname(MODE_FILE), { recursive: true });
+    writeFileSync(MODE_FILE, JSON.stringify({ enabled, ts: Date.now() }), "utf8");
+  } catch {}
+}
 
 function truncate(text: string): string {
   if (!text) return text;
@@ -143,7 +165,10 @@ export default function (pi: ExtensionAPI) {
           if (ep?.id) episodes.set(ep.id, ep);
         }
       }
-      if (lastMode !== undefined) brainStrict = lastMode;
+      // file wins: /pi-brain on stays on across sessions until /pi-brain off
+      const fileMode = readMode();
+      if (fileMode !== undefined) brainStrict = fileMode;
+      else if (lastMode !== undefined) brainStrict = lastMode;
     } catch {}
     // reflect in footer
     try { (pi as any)._brainStrict = brainStrict; } catch {}
@@ -452,6 +477,7 @@ export default function (pi: ExtensionAPI) {
         needsPlanUpdate = false;
         hasWriteEdit = false;
         hasRemember = false;
+        writeMode(enabled);
         await (pi as any).appendEntry?.("brain:mode", { enabled, ts: Date.now() });
         try { (pi as any)._brainStrict = enabled; ctx?.ui?.setStatus?.("brain", enabled ? "brain: strict" : "brain: default"); } catch {}
         (pi as any).events?.emit?.("brain:mode", { enabled });
@@ -525,21 +551,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("context" as any, async (ev: any) => {
     const msgs: any[] = ev?.messages ?? ev?.context ?? [];
-    if (msgs.length > 40 || JSON.stringify(msgs).length > 30 * 1024) {
-      // dedup duplicate episode blocks before tail slice (was in before_provider_request)
-      const seen = new Set<string>();
-      const deduped = msgs.filter((m: any) => {
-        const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
-        if (c.includes("Recent brain episodes:") || c.includes("Brain episodes:")) {
-          if (seen.has(c)) return false;
-          seen.add(c);
-        }
-        return true;
-      });
-      const sys = deduped.filter((m: any) => m.role === "system").slice(0, 1);
-      const tail = deduped.slice(-20);
-      return { messages: [...sys, ...tail] } as any;
-    }
+    // ponytail: dedup only — old sys.slice(0,1)+tail.slice(-20) orphaned tool_result from its
+    // assistant tool_calls, causing OpenAI 400: No function call found for call_id 'call_...'
+    // pi's compaction already handles window limits safely; don't slice here.
+    const seen = new Set<string>();
+    let changed = false;
+    const deduped = msgs.filter((m: any) => {
+      if (m.role !== "system") return true; // only system injections contain brain blocks; never touch tool pairs
+      const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+      if (c.includes("Recent brain episodes:") || c.includes("Brain episodes:")) {
+        if (seen.has(c)) { changed = true; return false; }
+        seen.add(c);
+      }
+      return true;
+    });
+    if (changed) return { messages: deduped } as any;
   });
 
   // T09: hippocampal hooks — auto-encode + consolidation (sleep replay)
