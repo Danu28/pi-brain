@@ -1,6 +1,6 @@
 # pi-brain — human brain → pi
 
-A `pi` extension that gives your coding agent a **hippocampus + PFC**: episodes you `remember` by cue, `recall` with TF-IDF, `think` before you act, `combine` distant ideas, `plan` in an ordered checklist, and `habit`-ize repeats. Strict workflow optional via `/pi-brain on`.
+A `pi` extension that gives your coding agent a **hippocampus + PFC**: episodes you `remember` by cue, `recall` with TF-IDF, `think` before you act, `creative-thinking` distant ideas, `plan` in an ordered checklist, and `habit`-ize repeats. Strict workflow optional via `/pi-brain on`.
 
 Standalone, zero deps — one `index.ts`, one `SKILL.md`.
 
@@ -23,7 +23,7 @@ Manual: copy `pi-brain/` to either location above.
 | `remember` | encode episode (`cue`, `summary`, `detail?`) — exact cue → upsert, similar ≥3 → preview unless `force:true` |
 | `recall` | TF-IDF recall by cue, ranked |
 | `think` | PFC scratchpad `goal + hypotheses[1..3]` |
-| `combine` / `synthesize` | fuse 2–3 cues + latest think |
+| `creative-thinking` / `synthesize` | fuse 2–3 cues + latest think |
 | `plan` | ordered tasklist `goal + tasks[]`, update via `id+done` |
 | `habit` | scaffold `.pi/skills/brain-<name>/SKILL.md` |
 | `brain_status` | count + token usage, overload signal |
@@ -31,7 +31,7 @@ Manual: copy `pi-brain/` to either location above.
 
 ## Strict workflow (on)
 
-`recall → think → [combine if novel] → plan → read→edit 1 file→bash → plan.done → remember → habit → git commit`
+`recall → think → [creative-thinking if novel] → plan → read→edit 1 file→bash → plan.done → remember → habit → git commit`
 
 Unhappy path auto-blocks `write/edit/bash` until `think{goal:"debug <Task N>"}` + `plan{id,done}`.
 

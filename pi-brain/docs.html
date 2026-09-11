@@ -133,12 +133,12 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
 
 <div class="twrap"><table class="tbl">
 <tr><th>File</th><th>Purpose</th><th>Lines</th></tr>
-<tr><td><code>pi-brain/index.ts</code></td><td>Single factory <code>export default function(pi: ExtensionAPI)</code> — 8 tools (remember/recall/think/synthesize+combine alias/plan/habit/brain_status) + 12 event handlers + <code>Map&lt;string,Episode&gt;</code> + deliberations</td><td>579</td></tr>
+<tr><td><code>pi-brain/index.ts</code></td><td>Single factory <code>export default function(pi: ExtensionAPI)</code> — 8 tools (remember/recall/think/synthesize+creative-thinking alias/plan/habit/brain_status) + 12 event handlers + <code>Map&lt;string,Episode&gt;</code> + deliberations</td><td>579</td></tr>
 <tr><td><code>pi-brain/SKILL.md</code></td><td>Procedural seed: when to use 8 tools — now with <code>think</code>/<code>synthesize</code> for reasoning/creativity</td><td>~45</td></tr>
 <tr><td><code>pi-brain/docs.html</code></td><td>This docs file — architecture, how it works, how to use, brain mapping (the only HTML kept)</td><td>~360</td></tr>
 </table></div>
 
-<div class="box ok"><b class="h">What we refused to build</b> SNN, vector DB, new LLM provider, new CLI/daemon, BCI/EEG, TUI visualizer, custom compaction LLM call — all rejected: "pi already does it / YAGNI". Only 7 impls + alias kept: memory, TF-IDF recall, think, synthesize/combine, plan, habit, status.</div>
+<div class="box ok"><b class="h">What we refused to build</b> SNN, vector DB, new LLM provider, new CLI/daemon, BCI/EEG, TUI visualizer, custom compaction LLM call — all rejected: "pi already does it / YAGNI". Only 7 impls + alias kept: memory, TF-IDF recall, think, synthesize/creative-thinking, plan, habit, status.</div>
 </section>
 
 <!-- ============ S1 ============ -->
@@ -193,7 +193,7 @@ sort by score desc, then ts desc
   <div class="a-d">▼</div>
   <div class="n c-pi"><b>state: episodes Map + entry renderer + session_start</b><span class="s">~35 lines. The hippocampus.</span></div>
   <div class="a-d">▼</div>
-  <div class="n c-mem"><b>tools: remember / recall / think / synthesize (alias combine) / plan / habit / brain_status</b><span class="s">~185 lines. Only public surface the model sees (reasoning + creativity added, one impl two names).</span></div>
+  <div class="n c-mem"><b>tools: remember / recall / think / synthesize (alias creative-thinking) / plan / habit / brain_status</b><span class="s">~185 lines. Only public surface the model sees (reasoning + creativity added, one impl two names).</span></div>
   <div class="a-d">▼</div>
   <div class="n c-sense"><b>events: input · before_agent_start · context · tool_result · session_before_compact · resources_discover · tool_call · before_provider_request (trim) · session_shutdown</b><span class="s">~100 lines. Gates, sculptors, hooks, guards — now with real payload trim + deliberation inject.</span></div>
   <div class="a-d">▼</div>
@@ -265,7 +265,7 @@ sort by score desc, then ts desc
 <tr><td><code>remember</code></td><td><code>{ cue, summary, detail?, tags? string[], refs? string[] }</code></td><td><code>"Encoded id" + entry</code></td><td>Persist fix + tags/refs (group + jump-to-code)</td></tr>
 <tr><td><code>recall</code></td><td><code>{ query, tags? string[], source? "remember"|"auto", since? "7d"|ms, limit? 1–20 }</code></td><td><code>TF-IDF + tag boost + half-life ranked</code></td><td>Find prior episode by cue/tag/recency</td></tr>
 <tr><td><code>think</code></td><td><code>{ goal, hypotheses[], conclusion? }</code></td><td><code>Deliberation saved</code></td><td>Reason explicitly before acting (PFC)</td></tr>
-<tr><td><code>synthesize</code> / <code>combine</code> alias</td><td><code>{ cues: [2-3], prompt? }</code></td><td><code>Synthesis prompt + sources + deliberation</code></td><td>Fuse distant episodes + latest think for novelty (creativity)</td></tr>
+<tr><td><code>synthesize</code> / <code>creative-thinking</code> alias</td><td><code>{ cues: [2-3], prompt? }</code></td><td><code>Synthesis prompt + sources + deliberation</code></td><td>Fuse distant episodes + latest think for novelty (creativity)</td></tr>
 <tr><td><code>habit</code></td><td><code>{ name, when, steps, variant? }</code></td><td><code>Drafted …/SKILL.md</code></td><td>Repeated correction → SKILL + mutate alternative</td></tr>
 <tr><td><code>brain_status</code></td><td><code>{}</code></td><td><code>Episodes / Tokens / overload</code></td><td>How full is brain? (emits overload if >80%)</td></tr>
 </table></div>
