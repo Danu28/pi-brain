@@ -691,18 +691,32 @@ export default function (pi: ExtensionAPI) {
         // ponytail: don't re-arm after plan-done warning — once per dirty cycle
       }
     } else if (ev?.toolName === "bash" && !ev?.isError) {
-      // ponytail: encode all successful bash — heuristic missed tests/lints; one rule, no drift
       const cmd: string = (ev.input?.command ?? "").toString();
-      const cue = `bash:${cmd.slice(0,30)}`;
-      const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
-      if (summary) {
-        const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
-        await (pi as any).appendEntry?.("brain:episode", ep);
-        episodes.set(ep.id, ep);
-        indexEpisode(ep);
-        hasWriteEdit = true;
-        hasRemember = false;
-        // ponytail: don't re-arm after plan-done warning — once per dirty cycle
+      // ponytail: Rule 7 git commit runs AFTER remember — don't re-arm Rule 5, else duplicate warning after plan done
+      // also covers any post-remember bash when plan already done (cycle closed)
+      if (isPlanDone() && hasRemember) {
+        // still encode but don't mark dirty
+        const cue = `bash:${cmd.slice(0,30)}`;
+        const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
+        if (summary) {
+          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
+          await (pi as any).appendEntry?.("brain:episode", ep);
+          episodes.set(ep.id, ep);
+          indexEpisode(ep);
+        }
+      } else {
+        // ponytail: encode all successful bash — heuristic missed tests/lints; one rule, no drift
+        const cue = `bash:${cmd.slice(0,30)}`;
+        const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
+        if (summary) {
+          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
+          await (pi as any).appendEntry?.("brain:episode", ep);
+          episodes.set(ep.id, ep);
+          indexEpisode(ep);
+          hasWriteEdit = true;
+          hasRemember = false;
+          // ponytail: don't re-arm after plan-done warning — once per dirty cycle
+        }
       }
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
