@@ -768,13 +768,6 @@ export default function (pi: ExtensionAPI) {
       try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
     }
   });
-  pi.on("agent_end" as any, async (_ev: any, ctx: any) => {
-    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned && isPlanDone()) {
-      rule5Warned = true;
-      try { ctx?.ui?.notify?.("Strict Rule 5: agent ended with unencoded changes — call remember now.", "warning"); } catch {}
-    }
-  });
-
   // before_provider_request deleted — merged into context dedup+trim (one prune, not two)
 
   pi.on("session_shutdown" as any, async () => {
