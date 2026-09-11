@@ -75,6 +75,7 @@ export default function (pi: ExtensionAPI) {
   let thinkSatisfied = false;
   let hasWriteEdit = false;
   let hasRemember = false;
+  let rule5Warned = false;
   let agentStartTs = 0;
   let needsDebugThink = false; // unhappy path: failure → must think before retry
   let needsPlanUpdate = false; // after debug think, must update plan before retry
@@ -108,6 +109,7 @@ export default function (pi: ExtensionAPI) {
     thinkSatisfied = false;
     hasWriteEdit = false;
     hasRemember = false;
+    rule5Warned = false;
     needsDebugThink = false;
     needsPlanUpdate = false;
     cachedLatestPlan = null;
@@ -166,8 +168,10 @@ export default function (pi: ExtensionAPI) {
         return { content: [{ type: "text", text: `Updated (audit: exact cue exists) ${exact.id} — was duplicate cue, merged instead of new` }], details: { id: exact.id, episode: exact, audit: "exact-cue-upsert" } };
       }
       // similarity audit: reuse scoreEpisode (TF-IDF lite) against cue+summary
+      // ponytail: exclude auto-encoded episodes — they would block the very remember Rule 5 requires
       const query = `${params.cue} ${params.summary}`;
       const scored = [...episodes.values()]
+        .filter((e) => e.source !== "auto")
         .map((e) => ({ e, s: scoreEpisode(e, query) }))
         .filter((x) => x.s >= 3)
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
@@ -452,6 +456,7 @@ export default function (pi: ExtensionAPI) {
     thinkSatisfied = false;
     hasWriteEdit = false;
     hasRemember = false;
+    rule5Warned = false;
     needsDebugThink = false;
     needsPlanUpdate = false;
     agentStartTs = Date.now();
@@ -512,6 +517,8 @@ export default function (pi: ExtensionAPI) {
         await (pi as any).appendEntry?.("brain:episode", ep);
         episodes.set(ep.id, ep);
         hasWriteEdit = true;
+        hasRemember = false;
+        rule5Warned = false;
       }
     } else if (ev?.toolName === "bash" && !ev?.isError) {
       const cmd: string = (ev.input?.command ?? "").toString();
@@ -524,10 +531,20 @@ export default function (pi: ExtensionAPI) {
           await (pi as any).appendEntry?.("brain:episode", ep);
           episodes.set(ep.id, ep);
           hasWriteEdit = true;
+          hasRemember = false;
+          rule5Warned = false;
         }
       }
     }
-    if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) hasRemember = true;
+    if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
+      // audit preview returns blocked:true but not isError — don't treat as persisted
+      const blocked = (ev as any)?.details?.blocked === true || (ev as any)?.result?.blocked === true;
+      if (!blocked) {
+        hasRemember = true;
+        hasWriteEdit = false;
+        rule5Warned = false;
+      }
+    }
     // unhappy path: any failure → require debug think before retry (enforced in tool_call)
     if (ev?.isError) {
       needsDebugThink = true;
@@ -586,19 +603,21 @@ export default function (pi: ExtensionAPI) {
     // hasRemember now set in tool_result (post-success) — not here
   });
 
-  // Rule 5: encode-or-it-didn't-happen — nudge at turn/agent end
+  // Rule 5: encode-or-it-didn't-happen — nudge at turn/agent end (debounced: once per dirty cycle)
   pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
-    if (brainStrict && hasWriteEdit && !hasRemember) {
+    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned) {
+      rule5Warned = true;
       try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
     }
   });
   pi.on("agent_end" as any, async (_ev: any, ctx: any) => {
-    if (brainStrict && hasWriteEdit && !hasRemember) {
+    if (brainStrict && hasWriteEdit && !hasRemember && !rule5Warned) {
+      rule5Warned = true;
       // last chance hint; also surface as tool_result-style nudge for LLM
       try { ctx?.ui?.notify?.("Strict Rule 5: agent ended with unencoded changes — call remember now.", "warning"); } catch {}
     }
-    // reset for next prompt
-    hasWriteEdit = false;
+    // keep hasWriteEdit until remember clears it; only reset warn flag for next agent
+    // (hasWriteEdit/hasRemember are reset in before_agent_start)
   });
 
   // T12: accelerate — real payload trim (was void ev) + cache stability (snippet-free)
