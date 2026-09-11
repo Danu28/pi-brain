@@ -35,7 +35,7 @@ const MAX_LINES = 2000;
 // Calibration knobs (top of index.ts) — tune without code change
 const TAG_BOOST = 1.5;
 const HALF_LIFE_DAYS = 7;
-const HALF_LIFE_FACTOR = 0.95;
+const HALF_LIFE_FACTOR = 0.5; // ponytail: 0.95→0.5 actually prefers fresh (was decorative 0.81 at 30d, now 0.05)
 const COMPACT_SMALL = 3;
 const COMPACT_LARGE = 5;
 // T1+T2 knobs
@@ -488,8 +488,16 @@ export default function (pi: ExtensionAPI) {
         }
         return true;
       });
+      const N = episodes.size;
       const scored = candidates
-        .map((e) => ({ e, s: Math.max(...queries.map(q => scoreEpisode(e, q, filterTags))) }))
+        .map((e) => {
+          const raw = Math.max(...queries.map(q => scoreEpisode(e, q, filterTags)));
+          if (raw === 0) return { e, s: 0 };
+          // ponytail: idf=log((N+1)/(df+1))+1 per expanded term — TF without IDF made common tokens dominate
+          const terms = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
+          const idf = terms.length ? terms.map(t => Math.log((N+1)/((tokenIndex.get(t)?.size ?? 0)+1))+1).reduce((a,b)=>a+b,0)/terms.length : 1;
+          return { e, s: raw * idf };
+        })
         .filter((x) => x.s > 0 || queries.every(q => q.trim() === "") || (filterTags?.length ? true : false))
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
         .slice(0, limit)
