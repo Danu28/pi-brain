@@ -84,7 +84,7 @@ function truncate(text: string): string {
 }
 
 function tokenize(s: string): string[] {
-  return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  try { return s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); } catch { return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
 }
 
 function normalizeTags(tags?: string[]): string[] | undefined {
@@ -117,6 +117,9 @@ const SYN: Record<string,string[]> = {
   db: ["db","database","store","storage"],
   ui: ["ui","frontend","interface","view"],
 };
+// ponytail: SYN override — pi-brain.syn.json merges if present (add when miss >20%)
+try { const _syn = JSON.parse(readFileSync(join(process.cwd(),"pi-brain.syn.json"),"utf8")); Object.assign(SYN, _syn); } catch {}
+try { const _syn2 = JSON.parse(readFileSync(join(homedir(),".pi","agent","pi-brain.syn.json"),"utf8") as any); Object.assign(SYN, _syn2); } catch {}
 function expandTokens(toks: string[]): string[] {
   const out = new Set<string>();
   for (const t of toks) {
@@ -176,11 +179,11 @@ function scoreBase(e: Episode, query: string, filterTags?: string[]): number {
     for (const t of expanded) if (eTagsNorm.includes(t)) s += TAG_BOOST;
     if (normFilterTags?.length) for (const ft of normFilterTags) if (eTagsNorm.includes(ft)) s += TAG_BOOST;
   }
-  // tag-only recall base score
+  // tag-only recall base score — per-tag boost
   if (!hasQuery && normFilterTags?.length && e.tags?.length) {
     const eTagsNorm = normalizeTags(e.tags) ?? [];
-    const matched = normFilterTags.some(ft => eTagsNorm.includes(ft));
-    if (matched && s === 0) s = TAG_BOOST;
+    const matchedCount = normFilterTags.filter(ft => eTagsNorm.includes(ft)).length;
+    if (matchedCount && s === 0) s = matchedCount * TAG_BOOST;
   }
   return s;
 }
@@ -254,11 +257,12 @@ export default function (pi: ExtensionAPI) {
       // clear memo on prune
       recallMemo.clear();
     }
-    // M2: LRU eviction if still over cap — delete oldest auto then oldest overall
+    // M2: LRU eviction if still over cap — delete oldest auto then oldest overall (warn if evicting remember)
     while (episodes.size > PRUNE_CAP) {
       const sorted = [...episodes.values()].sort((a,b)=>a.ts-b.ts);
       const oldest = sorted.find(e=>e.source==="auto") ?? sorted[0];
       if (!oldest) break;
+      if (oldest.source !== "auto") (pi as any).events?.emit?.("brain:overload", { evictRemember: oldest.cue, size: episodes.size });
       unindexEpisode(oldest);
       episodes.delete(oldest.id);
       n++;
@@ -446,6 +450,8 @@ export default function (pi: ExtensionAPI) {
       const cached = recallMemo.get(memoKey);
       if (cached && Date.now() - cached.ts < RECALL_MEMO_MS) {
         memoHits++;
+        // ponytail: true LRU — move to tail
+        recallMemo.delete(memoKey); recallMemo.set(memoKey, cached);
         if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
         return { content: [{ type: "text", text: truncate(cached.text) }], details: { episodes: cached.ranked, cached: true } };
       }

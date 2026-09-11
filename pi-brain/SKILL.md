@@ -64,7 +64,7 @@ Rule: Turn1 `read×N` parallel → Turn2 `edit×N+write×N+bash` parallel. 1 edi
 
 ## Calibration knobs (top of index.ts)
 
-`MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.95`, `RECALL_MEMO_MS=30000`, `PRUNE_WARN=35/PRUNE_CAP=40`, `REMEMBER_BOOST=2.0`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change. Batch: `queries[]` up to 5.
+`MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.95`, `RECALL_MEMO_MS=30000`, `PRUNE_WARN=35/PRUNE_CAP=40`, `REMEMBER_BOOST=2.0`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change. Batch: `queries[]` up to 5. SYN override: `pi-brain.syn.json` or `~/.pi/agent/pi-brain.syn.json` merges into SYN.
 
 ## Quickstart (60s)
 
