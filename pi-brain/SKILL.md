@@ -23,10 +23,10 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 - `think {goal, hypotheses[], conclusion?}` — PFC deliberation, injected next turn via `before_agent_start`. Unhappy path: goal must start with `debug`.
 - `plan {goal, tasks[], id?, done?, hypotheses?: string[]}` — ordered checklist after think+synthesize (`[ ] Task 1` → `[x] Task 1` via `plan{id,done:[0]}`), `brain:plan` entry. Single-shot: include `hypotheses` to auto-create deliberation (2 calls → 1). When all [x], `bash: git init if needed + commit`. Auto-link: when all done + hasWriteEdit, turn_end surfaces prefilled `remember` template.
 - `synthesize {cues: [2-3], prompt?}` / `combine` alias — divergent synthesis fusing episodes + latest `think`. Prompt e.g. `synthesize neon + login into glass login` NOT `creative approach`; loose/missing auto-enriched with cues+think goal.
-- `habit {name, when, steps, variant?}` — draft `.pi/skills/brain-<name>/SKILL.md`; `variant` adds alternative. Preview: if exists returns diff + "call again to confirm"; reports sanitized name + `rm -r` undo hint. Blocked if project untrusted.
+- `habit {name, when, steps, variant?, force?: boolean}` — draft `.pi/skills/brain-<name>/SKILL.md`; `variant` adds alternative. Preview: if exists returns diff + "call again with force:true to confirm"; reports sanitized name + `rm -r` undo hint. Blocked if project untrusted.
 - `brain_status {}` — dashboard table: episodes | deliberations | plan | tokens | overload | recent cues + index stats; emits `brain:overload` if >80% or episodes>50.
 
-> 8 tools total (remember/recall/think/synthesize+combine alias/plan/habit/brain_status — 7 impls, 2 names for one). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict injects maxScore==0→1 else up to 5 with trace; default injects 1 else 2 scored (saves ~250 tokens/turn). **Single-shot:** `plan{hypotheses}` creates deliberation. **Compact:** <15→3 else 5, overload→5. **Trim:** dedup duplicate episode blocks before tail slice.
+> 8 tools total (remember/recall/think/synthesize+combine alias/plan/habit/brain_status — 7 impls, 2 names for one). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict: scored up to 5 (1 if no match) + trace; default: 1 episode +1 deliberation gated (~250 tokens saved/turn). **Single-shot:** `plan{hypotheses}` creates deliberation (2→1). **Compact:** <15→3 else 5, overload→5. **Trim:** `context` dedups duplicate episode blocks then tails to 20.
 
 ## Command
 
@@ -36,7 +36,7 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 
 ## Behavior
 
-- Default (`off`): relevance-gated 1 recent if no score else 2 scored + 2 deliberations auto-inject via `before_agent_start` with trace.
+- Default (`off`): gated 1 episode +1 deliberation auto-inject via `before_agent_start` (strict gets up to 5 scored).
 - Strict (`on`): 7-rule workflow enforced by extension (not docs): **Happy: recall → think → [synthesize/combine if novel] → plan → execute → plan.done → remember → habit → git commit**
   **Unhappy (on ANY failure): same flow, but failure → think{goal:'debug <Task N> — <tool>: <err>', hypotheses:[cause,fix]} → update plan → retry (enforced: `tool_call` blocks write/edit/bash until debug-think, block message includes template + failedTool + error snippet).**
   1. **Recall-first** — `before_agent_start` scores TF-IDF top-5 + decay for prompt + `systemPrompt` clamp (`ONLY from episodes, cite cue`). Empty query allowed; tag filter intersects.
@@ -48,8 +48,8 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
   7. **Git** — when plan 2/2 done + remember done, `bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>'` (auto-init first time, skip if no changes).
   Rebuilt from `brain:mode` + `brain:plan` on `session_start` (branch-durable, index rebuilt).
 - `edit/write/bash` auto-encode (indexed); `bash` error hints recall with failedTool snippet; `rm -rf` confirm.
-- Compaction injects top 3 if <15 else 5; overload keeps 5; `before_provider_request` dedups duplicate blocks then trims >30KB.
-- `context` prunes >40 msgs → system + last 20.
+- Compaction injects top 3 if <15 else 5; overload keeps 5.
+- `context` dedups duplicate episode blocks then prunes >40 msgs / >30KB → system + last 20.
 
 ## Calibration knobs (top of index.ts)
 

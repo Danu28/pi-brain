@@ -28,11 +28,14 @@ const MAX_BYTES = 50 * 1024;
 const MAX_LINES = 2000;
 
 function truncate(text: string): string {
+  if (!text) return text;
   const lines = text.split("\n");
   if (lines.length > MAX_LINES) text = lines.slice(0, MAX_LINES).join("\n") + `\n[truncated ${lines.length - MAX_LINES} lines]`;
-  if (Buffer.byteLength(text, "utf8") > MAX_BYTES) {
+  const byteLen = typeof Buffer !== "undefined" ? Buffer.byteLength(text, "utf8") : new TextEncoder().encode(text).length;
+  if (byteLen > MAX_BYTES) {
     // ponytail: naive byte cut, full output parked via writeTempFile if pi provides it — keep simple
-    text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8") + "\n[truncated to 50KB]";
+    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8") + "\n[truncated to 50KB]";
+    else text = text.slice(0, MAX_BYTES) + "\n[truncated to 50KB]";
   }
   return text;
 }
@@ -44,21 +47,18 @@ function tokenize(s: string): string[] {
 function scoreEpisode(e: Episode, query: string): number {
   const terms = tokenize(query);
   if (!terms.length) return 0;
-  // TF-IDF lite: per-term TF weighted by field (cue 2, summary 1, detail 0.5) + exact phrase bonus
-  const qLower = query.toLowerCase();
+  const qLower = query.toLowerCase().trim();
   let s = 0;
-  const cueL = e.cue.toLowerCase();
-  const sumL = e.summary.toLowerCase();
-  const detL = (e.detail ?? "").toLowerCase();
-  // exact phrase bonus (rare but strong signal)
-  if (cueL.includes(qLower)) s += 2;
-  if (sumL.includes(qLower)) s += 1;
-  // per-term TF
+  // token-exact TF — avoids substring false positives ("a" in "data")
+  const cueToks = tokenize(e.cue);
+  const sumToks = tokenize(e.summary);
+  const detToks = tokenize(e.detail ?? "");
+  if (e.cue.toLowerCase().includes(qLower)) s += 2;
+  if (e.summary.toLowerCase().includes(qLower)) s += 1;
   for (const t of terms) {
-    const cueCount = cueL.split(t).length - 1;
-    const sumCount = sumL.split(t).length - 1;
-    const detCount = detL.split(t).length - 1;
-    s += cueCount * 2 + sumCount * 1 + detCount * 0.5;
+    s += cueToks.filter((x) => x === t).length * 2;
+    s += sumToks.filter((x) => x === t).length * 1;
+    s += detToks.filter((x) => x === t).length * 0.5;
   }
   // ponytail: O(n) scan, add index if >10k entries
   return s;
@@ -130,6 +130,10 @@ export default function (pi: ExtensionAPI) {
           const d = (e as any).data ?? (e as any).entry ?? e;
           if (typeof d?.enabled === "boolean") lastMode = d.enabled;
         }
+        if (e.type === "entry" && (e.entryType === "brain:deliberation" || e.entry_type === "brain:deliberation")) {
+          const d = (e as any).data ?? (e as any).entry ?? e;
+          if (d?.goal) deliberations.push(d as any);
+        }
         if (e.type === "message" && (e as any).message?.role === "toolResult" && (e as any).message?.toolName === "remember") {
           const ep = (e as any).message?.details?.episode;
           if (ep?.id) episodes.set(ep.id, ep);
@@ -154,6 +158,8 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, params, _signal, _onUpdate, _ctx) {
       const cueNorm = params.cue.trim().toLowerCase();
+      if (!cueNorm) return { content: [{ type: "text", text: "cue must be non-empty" }], details: { error: "empty cue" } } as any;
+      if (!params.summary?.trim()) return { content: [{ type: "text", text: "summary must be non-empty" }], details: { error: "empty summary" } } as any;
       // ponytail: exact cue → upsert (no dup), reuse scoring for similarity check
       const exact = [...episodes.values()].find((e) => e.cue.trim().toLowerCase() === cueNorm);
       if (exact && !params.force) {
@@ -263,6 +269,7 @@ export default function (pi: ExtensionAPI) {
       const entry = { goal: truncate(params.goal), hypotheses: params.hypotheses.map(truncate), conclusion: params.conclusion ? truncate(params.conclusion) : undefined, ts: Date.now() };
       deliberations.push(entry as any);
       if (deliberations.length > 10) deliberations.shift();
+      await (pi as any).appendEntry?.("brain:deliberation", entry);
       thinkSatisfied = true;
       needsDebugThink = false;
       if (wasDebug) needsPlanUpdate = true;
@@ -323,12 +330,13 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "plan",
     label: "Plan",
-    description: "Create/update ordered tasklist after think (+ synthesize/combine if novel). Use after think/synthesize, before write. Tasks shown as [ ]/[x]. Pass id+done to mark complete. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
+    description: "Create/update ordered tasklist after think (+ synthesize/combine if novel). Use after think/synthesize, before write. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
     parameters: Type.Object({
       goal: Type.Optional(Type.String({ description: "Plan goal (e.g. creative login page)" })),
       tasks: Type.Optional(Type.Array(Type.String(), { description: "Ordered tasks", minItems: 1, maxItems: 10 })),
       id: Type.Optional(Type.String({ description: "Existing plan id to update" })),
       done: Type.Optional(Type.Array(Type.Number({ minimum: 0 }), { description: "Indices to mark done (0-based)" })),
+      hypotheses: Type.Optional(Type.Array(Type.String(), { description: "Single-shot hypotheses (auto-creates think)", minItems: 1, maxItems: 3 })),
     }),
     async execute(_id, params, _signal) {
       // update existing plan — tasks/goal optional when id provided
@@ -349,6 +357,16 @@ export default function (pi: ExtensionAPI) {
         await (pi as any).appendEntry?.("brain:plan", pl);
         const text = renderPlan(pl) + `\n(id: ${pl.id})`;
         return { content: [{ type: "text", text: truncate(text) }], details: { plan: pl } };
+      }
+      // single-shot: hypotheses → auto-create deliberation (2 calls → 1)
+      if (params.hypotheses?.length) {
+        const entry = { id: `delib:${Date.now()}`, goal: params.goal ?? "plan deliberation", hypotheses: params.hypotheses.map((h: string) => truncate(h)), ts: Date.now() };
+        deliberations.push(entry as any);
+        if (deliberations.length > 10) deliberations.shift();
+        await (pi as any).appendEntry?.("brain:deliberation", entry);
+        thinkSatisfied = true;
+        needsDebugThink = false;
+        if (entry.goal.toLowerCase().trim().startsWith("debug")) needsPlanUpdate = true;
       }
       // create new plan — ponytail: collision-free id, no goal slop
       if (!params.goal || !params.tasks?.length) return { content: [{ type: "text", text: "plan: goal and tasks required for new plan (use id+done to update)" }], details: { error: "missing goal/tasks" } } as any;
@@ -379,6 +397,7 @@ export default function (pi: ExtensionAPI) {
       when: Type.String({ description: "When to use this habit" }),
       steps: Type.String({ description: "Steps to follow" }),
       variant: Type.Optional(Type.String({ description: "Optional mutate: add creative alternative steps" })),
+      force: Type.Optional(Type.Boolean({ description: "Confirm overwrite when preview exists" })),
     }),
     async execute(_id, params, signal, _upd, ctx: any) {
       const cwd: string = ctx?.cwd ?? (pi as any).cwd ?? process.cwd();
@@ -387,6 +406,16 @@ export default function (pi: ExtensionAPI) {
       if (ctx?.isProjectTrusted?.() === false) return { content: [{ type: "text", text: "Project not trusted — habit blocked" }], details: { error: "untrusted" } } as any;
       const dir = `${cwd}/.pi/skills/brain-${safe}`;
       const file = `${dir}/SKILL.md`;
+      // preview: if exists, require force:true to confirm overwrite
+      if (!params.force) {
+        try {
+          const { readFileSync } = await import("node:fs");
+          const existing = readFileSync(file, "utf8");
+          const preview = existing.slice(0, 400).replace(/\n/g, " ");
+          const altHint = params.variant ? " + variant" : " — add variant to enrich";
+          return { content: [{ type: "text", text: `Preview: habit exists at ${file}:\n${preview}\n→ call again with force:true to confirm overwrite${altHint}. Undo: rm -r ${dir}` }], details: { blocked: true, existing, preview } } as any;
+        } catch {}
+      }
       const alt = params.variant ? `\n\n## Alternative (mutate)\n\n${params.variant}\n` : "";
       const body = `---\nname: brain-${safe}\ndescription: ${params.when.replace(/---/g,"—").replace(/\n/g," ").slice(0,120)}\n---\n\n# ${params.name}\n\n${params.steps}${alt}\n`;
       try {
@@ -398,7 +427,7 @@ export default function (pi: ExtensionAPI) {
       } catch (e: any) {
         return { content: [{ type: "text", text: `Failed: ${e.message}` }], details: { error: String(e) } };
       }
-      return { content: [{ type: "text", text: `Drafted ${file}${params.variant ? " + variant" : ""}` }], details: { skillPath: dir } };
+      return { content: [{ type: "text", text: `Drafted ${file}${params.variant ? " + variant" : ""} — undo: rm -r ${dir}` }], details: { skillPath: dir } };
     },
   });
 
@@ -442,14 +471,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // T08: thalamic gate + context sculptor (PFC working memory)
-  pi.on("input" as any, async (ev: any) => {
-    if (typeof ev?.text === "string" && ev.text.startsWith("@")) {
-      if (ev.text.length === 1) return { action: "continue" } as any;
-      return { action: "transform", text: ev.text.slice(1) } as any;
-    }
-    return { action: "continue" } as any;
-  });
+  // T08: deleted thalamic @ gate — pi already normalizes @mentions; gate hijacked @file prompts (YAGNI)
+  // ponytail: delete, add back only if proven needed
 
   // strict workflow run lifecycle — reset per prompt (ponytail: unconditional reset, no timestamp drift)
   pi.on("before_agent_start" as any, async (ev: any) => {
@@ -483,9 +506,9 @@ export default function (pi: ExtensionAPI) {
       const sys = typeof ev?.systemPrompt === "string" ? ev.systemPrompt + "\n\n" + strictWithPlan : strictWithPlan;
       return { systemPrompt: sys } as any;
     }
-    // default mode: light recent injection (existing behavior)
-    const recent = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 3);
-    const recentThink = deliberations.slice(-2);
+    // default mode: gated light injection — 1 episode + 1 deliberation (was 3+2; strict gets 5 scored)
+    const recent = [...episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 1);
+    const recentThink = deliberations.slice(-1);
     const latestPlanDef = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
     if (latestPlanDef) cachedLatestPlan = latestPlanDef;
     if (!recent.length && !recentThink.length && !latestPlanDef) return;
@@ -497,11 +520,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("context" as any, async (ev: any) => {
-    // T12 accelerate: keep working set small — prune oldest toolResults if branch huge
     const msgs: any[] = ev?.messages ?? ev?.context ?? [];
-    if (msgs.length > 40) {
-      const sys = msgs.filter((m: any) => m.role === "system").slice(0, 1);
-      const tail = msgs.slice(-20);
+    if (msgs.length > 40 || JSON.stringify(msgs).length > 30 * 1024) {
+      // dedup duplicate episode blocks before tail slice (was in before_provider_request)
+      const seen = new Set<string>();
+      const deduped = msgs.filter((m: any) => {
+        const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+        if (c.includes("Recent brain episodes:") || c.includes("Brain episodes:")) {
+          if (seen.has(c)) return false;
+          seen.add(c);
+        }
+        return true;
+      });
+      const sys = deduped.filter((m: any) => m.role === "system").slice(0, 1);
+      const tail = deduped.slice(-20);
       return { messages: [...sys, ...tail] } as any;
     }
   });
@@ -521,19 +553,17 @@ export default function (pi: ExtensionAPI) {
         rule5Warned = false;
       }
     } else if (ev?.toolName === "bash" && !ev?.isError) {
+      // ponytail: encode all successful bash — heuristic missed tests/lints; one rule, no drift
       const cmd: string = (ev.input?.command ?? "").toString();
-      const isMutating = /\b(mkdir|rm|mv|cp|touch|install|chmod|chown)\b/.test(cmd) || (cmd.includes(">") && !cmd.includes("/dev/null") && !cmd.includes("2>&1") && /[>]\s*[^\s|&;]+/.test(cmd)) || /\b(write|edit)\b/i.test(cmd);
-      if (isMutating) {
-        const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
-        if (summary) {
-          const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
-          await (pi as any).appendEntry?.("brain:episode", ep);
-          episodes.set(ep.id, ep);
-          hasWriteEdit = true;
-          hasRemember = false;
-          rule5Warned = false;
-        }
+      const cue = `bash:${cmd.slice(0,30)}`;
+      const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
+      if (summary) {
+        const ep: Episode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto" };
+        await (pi as any).appendEntry?.("brain:episode", ep);
+        episodes.set(ep.id, ep);
+        hasWriteEdit = true;
+        hasRemember = false;
+        rule5Warned = false;
       }
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
@@ -545,8 +575,8 @@ export default function (pi: ExtensionAPI) {
         rule5Warned = false;
       }
     }
-    // unhappy path: any failure → require debug think before retry (enforced in tool_call)
-    if (ev?.isError) {
+    // unhappy path: only write/edit/bash failures block retry (narrowed from "any failure")
+    if (ev?.isError && ["write", "edit", "bash"].includes(ev?.toolName)) {
       needsDebugThink = true;
       needsPlanUpdate = false;
       thinkSatisfied = false;
@@ -565,11 +595,7 @@ export default function (pi: ExtensionAPI) {
     return { summary } as any;
   });
 
-  // resources_discover: habit skills live under .pi/skills and are auto-discovered — do not inject wildcard "brain-*" (caused skill path does not exist in Test-Repo)
-  pi.on("resources_discover" as any, async (ev: any) => {
-    // keep auto-discovered paths as-is; habit-created .pi/skills/brain-* are already scanned
-    return { skillPaths: ev?.skillPaths ?? [] } as any;
-  });
+  // resources_discover deleted — .pi/skills auto-discovered, no handler needed
 
   pi.on("tool_call" as any, async (ev: any, ctx: any) => {
     // rm -rf guard first (highest priority) — covers rm -fr / -r -f / --recursive --force
@@ -620,21 +646,7 @@ export default function (pi: ExtensionAPI) {
     // (hasWriteEdit/hasRemember are reset in before_agent_start)
   });
 
-  // T12: accelerate — real payload trim (was void ev) + cache stability (snippet-free)
-  pi.on("before_provider_request" as any, async (ev: any) => {
-    try {
-      const req = ev?.request ?? ev?.payload ?? ev;
-      const msgs = req?.messages ?? req?.payload?.messages ?? ev?.messages;
-      if (Array.isArray(msgs) && JSON.stringify(msgs).length > 30 * 1024) {
-        // keep system + last 25, drop oldest toolResults — predictive trim
-        const sys = msgs.filter((m: any) => m.role === "system").slice(0, 1);
-        const tail = msgs.slice(-25);
-        const trimmed = [...sys, ...tail];
-        if (req.messages) req.messages = trimmed;
-        else if (req.payload?.messages) req.payload.messages = trimmed;
-      }
-    } catch {}
-  });
+  // before_provider_request deleted — merged into context dedup+trim (one prune, not two)
 
   pi.on("session_shutdown" as any, async () => {
     // idempotent — entries already durable, nothing to flush
