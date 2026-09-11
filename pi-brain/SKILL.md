@@ -37,13 +37,14 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 ## Behavior
 
 - Default (`off`): gated 1 episode +1 deliberation auto-inject via `before_agent_start` (strict gets up to 5 scored).
-- Strict (`on`): 7-rule workflow enforced by extension (not docs): **Happy: recall → think → [creative-thinking if novel] → plan → execute → plan.done → remember → habit → git commit**
-  **Unhappy (on ANY failure): same flow, but failure → think{goal:'debug <Task N> — <tool>: <err>', hypotheses:[cause,fix]} → update plan → retry (enforced: `tool_call` blocks write/edit/bash until debug-think, block message includes template + failedTool + error snippet).**
+- Strict (`on`): 7-rule workflow enforced by extension (not docs): **Happy (2-call floor): recall → think → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel → plan #2 done:[all] → remember → habit → git commit**
+  **Unhappy (3-call floor): same flow but 3 plan calls — plan #1 → failure → think{goal:'debug <Task N> — <tool>: <err>', hypotheses:[cause,fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember (enforced: `tool_call` blocks write/edit/bash until debug-think).**
+  **Batch: 1 LLM call = N tool calls. Turn1 read×N; Turn2 edit×N+write×N+bash. Never re-read unchanged (hash/cached). Chunk edits: 1 edit/file, exact oldText, merge nearby. If oldText known → 1 call. Record → 0-call replay. 5-Step: Question→Delete→Simplify→Accelerate→Automate.**
   1. **Recall-first** — `before_agent_start` scores TF-IDF top-5 + decay for prompt + `systemPrompt` clamp (`ONLY from episodes, cite cue`). Empty query allowed; tag filter intersects.
   2. **Think-before-act** — `tool_call` blocks `write/edit` until `think{goal,hypotheses}` or `plan{hypotheses}` called (per-agent run).
   3. **Creative-thinking-only-for-novelty** — prompt instructs: `creative-thinking` for creative/novel tasks, skip for CRUD/bugfix (before plan to get all inputs). Now fuses `think` deliberation + episodes.
-  4. **Plan-after-inputs** — `think` (+ `creative-thinking` if used) → `plan{goal,tasks[]}` creates `[ ]` list; single-shot `plan{hypotheses}` allowed; mark `[x]` via `plan{id,done:[i]}`; latest plan auto-injected. All-done → prefilled `remember` hint.
-  5. **Shortest-diff** — prompt instructs: read target → edit one file → bash verify, no scaffolding.
+  4. **Plan-after-inputs** — `think` (+ `creative-thinking` if used) → `plan{goal,tasks[]}` creates `[ ]` list; single-shot `plan{hypotheses}` allowed; mark `[x]` via `plan{id,done:[i]}`; latest plan auto-injected. All-done → prefilled `remember` hint. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.
+  5. **Shortest-diff + Batch** — Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, never re-read unchanged (hash/cached), 1 edit/file with exact oldText, no scaffolding for later. Bash verify after edits land.
   6. **Encode** — `tool_result` auto-encodes `write/edit/bash` with indexed episode; `turn_end`/`agent_end` nudges if `remember`/`habit` not called; 2nd repeat → `habit`; habit preview checks collision.
   7. **Git** — when plan 2/2 done + remember done, `bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>'` (auto-init first time, skip if no changes).
   Rebuilt from `brain:mode` + `brain:plan` on `session_start` (branch-durable, index rebuilt).
@@ -59,7 +60,7 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 - `bash {command, timeout?}` — shell (`ls`, `grep`, `find`, `git`, verify), output truncated 50KB
 - Custom tools — any `pi.registerTool {name, parameters}` — call by `name` with matching params (discover via skill list/recall)
 
-Rule: `read` target first → `edit` one file → `bash` verify. Prefer `edit` over `write` for patches, `read` before edit, `bash` only for checks/git.
+Rule: Turn1 `read×N` parallel → Turn2 `edit×N+write×N+bash` parallel. Never re-read unchanged (hash/cached), 1 edit/file exact oldText. Prefer `edit` over `write` for patches, `bash` only for checks/git. If oldText known → skip reads → 1 call.
 
 ## Calibration knobs (top of index.ts)
 

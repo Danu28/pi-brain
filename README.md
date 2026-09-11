@@ -31,9 +31,9 @@ Manual: copy `pi-brain/` to either location above.
 
 ## Strict workflow (on)
 
-Happy (2 plan calls): `recall → think → [creative-thinking if novel] → plan #1 → read→edit 1 file→bash → plan #2 done:[all] → remember → habit → git commit`
+Happy (2-call floor): `recall → think → [creative-thinking if novel] → plan #1 → Turn1 read×N → Turn2 edit×N+write×N+bash → plan #2 done:[all] → remember → habit → git commit` (Batch: 1 LLM call = N tools, never re-read unchanged, 5-Step: Question→Delete→Simplify→Accelerate→Automate)
 
-Unhappy (3 plan calls): `plan #1 → failure → think{goal:"debug <Task N>"} → plan #2 → retry → plan #3 done:[all] → remember`
+Unhappy (3-call floor): `plan #1 → failure → think{goal:"debug <Task N>"} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember` (Record → 0-call replay)
 
 Blocks `write/edit/bash` until `think{goal:"debug ..."}` done.
 
