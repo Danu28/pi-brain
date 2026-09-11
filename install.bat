@@ -59,9 +59,10 @@ mkdir "%ED%" 2>nul
 mkdir "%SD%" 2>nul
 
 copy /y "%S%\index.ts" "%ED%\index.ts" >nul
-copy /y "%S%\SKILL.md" "%ED%\SKILL.md" >nul
 if exist "%S%\docs.html" copy /y "%S%\docs.html" "%ED%\docs.html" >nul
 copy /y "%S%\SKILL.md" "%SD%\SKILL.md" >nul
+:: cleanup stray skill copy from previous installs
+if exist "%ED%\SKILL.md" del /q "%ED%\SKILL.md" >nul 2>&1
 
 if not exist "%ED%\index.ts" (
   echo  [fail] Extension not installed: "%ED%\index.ts"
