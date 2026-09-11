@@ -19,7 +19,7 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 ## Tools
 
 - `remember {cue, summary, detail?, tags?: string[] (≤8 kebab), refs?: string[] (≤5 files)}` — durable episode (`brain:episode` entry). Tags weight 1.5× in recall, refs show in TUI.
-- `recall {query, limit?, tags?: string[], source?: "remember"|"auto", since?: "7d"|"24h"|ms|ISO}` — TF-IDF ranked recall (cue 2×, summary 1×, detail 0.5× per term + tag boost + half-life 0.95/7d). Empty query + tags allowed (tag-only). Incremental token→ids index, fallback scan.
+- `recall {query?, queries?: string[] (≤5 batch), limit?, tags?: string[], source?: "remember"|"auto", since?: "7d"|"24h"|ms|ISO}` — TF-IDF ranked recall (cue 2×, summary 1×, detail 0.5× per term + tag boost + half-life 0.95/7d). Empty query + tags allowed (tag-only). Batch `queries[]` = 1 call = N recalls. Incremental token→ids index + 30s memo + fallback scan.
 - `think {goal, hypotheses[], conclusion?}` — PFC deliberation, injected next turn via `before_agent_start`. Unhappy path: goal must start with `debug`.
 - `plan {goal, tasks[], id?, done?, hypotheses?: string[]}` — **detailed** ordered checklist after think+creative-thinking (`[ ] Task 1` → `[x] Task 1` via `plan{id,done:[0]}`), `brain:plan` entry. **Requires 3-10 tasks, each detailed (≥10 chars) and well-split to match the user requirement** — a good plan makes execution trivial. Aim 8-10 when the requirement is multi-step; keep 3 minimum. Single-shot: include `hypotheses` to auto-create deliberation (2 calls → 1). When all [x], `bash: git init if needed + commit`. Auto-link: when all done + hasWriteEdit, turn_end surfaces prefilled `remember` template. Example (8 tasks for "add auth flow"): `["think + analyze auth requirement & existing routes","design token schema + decide storage","implement login endpoint","implement refresh/logout","add middleware + protect routes","write client integration","verify with bash + tests","remember + habit"]` — tool stays small, output stays detailed.
 - `creative-thinking {cues: [2-3], prompt?}` — divergent synthesis fusing episodes + latest `think`. Prompt e.g. `creative-thinking neon + login into glass login` NOT `creative approach`; loose/missing auto-enriched with cues+think goal.
@@ -64,7 +64,7 @@ Rule: Turn1 `read×N` parallel → Turn2 `edit×N+write×N+bash` parallel. Never
 
 ## Calibration knobs (top of index.ts)
 
-`MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.95`, `DEFAULT_INJECT_COUNT=1`, `DEFAULT_INJECT_SCORED=2`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change.
+`MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.95`, `RECALL_MEMO_MS=30000`, `readCache` (hash/cached), `TAG_BOOST`, `REMEMBER_BOOST=2.0`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change. Batch: `queries[]` up to 5, `hashContent` naive.
 
 ## Quickstart (60s)
 

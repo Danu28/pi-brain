@@ -43,8 +43,8 @@ const COMPACT_LARGE = 5;
 const REMEMBER_BOOST = 2.0;
 const AUTO_BOOST = 0.6;
 const AUTO_TTL_MS = 3 * 86400000;
-// T9 memo TTL
-const RECALL_MEMO_MS = 5000;
+// T9 memo TTL — ponytail: 5s→30s, clear on remember/index (batch hit rate)
+const RECALL_MEMO_MS = 30000;
 // T10 budget thresholds
 const BUDGET_WARN_PCT = 75;
 const BUDGET_STOP_PCT = 85;
@@ -196,6 +196,9 @@ export default function (pi: ExtensionAPI) {
   const episodes = new Map<string, Episode>();
   // incremental token → ids index (ponytail: O(1) recall, rebuilt on session_start, O(n) fallback if <10k)
   const tokenIndex = new Map<string, Set<string>>();
+  // ponytail: read cache — naive hash, skip re-read unchanged (hash/cached), per-path lock if throughput matters
+  const readCache = new Map<string, string>();
+  function hashContent(s: string): string { return `${s.length}:${s.slice(0,120)}`; }
   // PFC scratchpad — deliberations (not durable, per-turn working memory)
   const deliberations: { goal: string; hypotheses: string[]; ts: number }[] = [];
   // /pi-brain strict gate — branch-durable, defaults off
@@ -416,9 +419,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "recall",
     label: "Recall",
-    description: "Associative recall: TF-IDF cue→ranked episodes (pattern completion). Incremental token→ids index + half-life decay + tag boost + filters tags/source/since. Tag-only recall: query \"\" + tags. No vector DB.",
+    description: "Associative recall: TF-IDF cue→ranked episodes (pattern completion). Incremental token→ids index + half-life decay + tag boost + filters tags/source/since. Tag-only recall: query \"\" + tags. Batch: queries[] for 1 call = N recalls. No vector DB.",
     parameters: Type.Object({
-      query: Type.String({ description: "Cue to recall by" }),
+      query: Type.Optional(Type.String({ description: "Cue to recall by" })),
+      queries: Type.Optional(Type.Array(Type.String(), { description: "Batch cues (1 call = N recalls)", maxItems: 5 })),
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
       tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (AND)", maxItems: 8 })),
       source: Type.Optional(Type.String({ description: "Filter by source: remember|auto" })),
@@ -426,9 +430,11 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal) {
       const limit = params.limit ?? 5;
+      const queries: string[] = (params as any).queries?.length ? (params as any).queries : [(params as any).query ?? ""];
+      const primaryQuery = queries[0] ?? "";
       // T9 memo key (T5 normalize tags for stable key)
       const normTags = normalizeTags(params.tags as any);
-      const memoKey = `${params.query}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`;
+      const memoKey = `${queries.join("+")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`;
       const cached = recallMemo.get(memoKey);
       if (cached && Date.now() - cached.ts < RECALL_MEMO_MS) {
         memoHits++;
@@ -438,8 +444,9 @@ export default function (pi: ExtensionAPI) {
       const filterTags = normTags;
       const sinceTs = parseSince(params.since as any);
       let candidates: Episode[] = [...episodes.values()];
-      // incremental index: narrow candidates via token index if query has tokens (expanded)
-      const qToks = expandTokens(tokenize(params.query));
+      // batch queries: union tokens and max score across queries (1 call = N recalls)
+      const allQToks = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
+      const qToks = allQToks;
       if (qToks.length && tokenIndex.size) {
         const idSets = qToks.map(t => tokenIndex.get(t)).filter(Boolean) as Set<string>[];
         if (idSets.length) {
@@ -470,8 +477,8 @@ export default function (pi: ExtensionAPI) {
         return true;
       });
       const scored = candidates
-        .map((e) => ({ e, s: scoreEpisode(e, params.query, filterTags) }))
-        .filter((x) => x.s > 0 || params.query.trim() === "" || (filterTags?.length ? true : false))
+        .map((e) => ({ e, s: Math.max(...queries.map(q => scoreEpisode(e, q, filterTags))) }))
+        .filter((x) => x.s > 0 || queries.every(q => q.trim() === "") || (filterTags?.length ? true : false))
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
         .slice(0, limit)
         .map((x) => x.e);
@@ -627,8 +634,10 @@ export default function (pi: ExtensionAPI) {
         const text = renderPlan(pl) + `\n(id: ${pl.id})`;
         return { content: [{ type: "text", text: truncate(text) }], details: { plan: pl } };
       }
-      // single-shot: hypotheses → auto-create deliberation (2 calls → 1)
+      // single-shot: hypotheses → auto-create deliberation (2 calls → 1) — ponytail: prefer this, 2 hypotheses min for real deliberation
       if (params.hypotheses?.length) {
+        if (params.hypotheses.length < 2) return { content: [{ type: "text", text: "plan single-shot: hypotheses needs 2-3 detailed (≥10 chars each) — deliberation requires 2 approaches" }], details: { error: "hypotheses too few" } } as any;
+        if (params.hypotheses.some((h: string) => h.trim().length < 10)) return { content: [{ type: "text", text: "plan hypotheses must be detailed (≥10 chars each)" }], details: { error: "hypotheses not detailed" } } as any;
         const entry = { id: `delib:${Date.now()}`, goal: params.goal ?? "plan deliberation", hypotheses: params.hypotheses.map((h: string) => truncate(h)), ts: Date.now() };
         deliberations.push(entry as any);
         if (deliberations.length > 10) deliberations.shift();
@@ -747,8 +756,9 @@ export default function (pi: ExtensionAPI) {
   // T08: deleted thalamic @ gate — pi already normalizes @mentions; gate hijacked @file prompts (YAGNI)
   // ponytail: delete, add back only if proven needed
 
+  // ponytail: PREFIX v2 — literal only, never interpolate; delta goes in message (KV-cache stable)
   // T6 stable prefix for KV-cache
-  const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (2-call floor): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash verify parallel → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (3-call floor): same but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\nBatch: 1 LLM call = N tool calls. Turn1: read×N parallel; Turn2: edit×N+write×N+bash parallel. Never re-read unchanged (hash/cached). Chunk edits: 1 edit per file, exact oldText, merge nearby changes. If oldText known → skip reads → 1 call. Record → 0-call replay. 5-Step: Question→Delete→Simplify→Accelerate→Automate.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + read relevant files smart (only relevant) to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.\n5. Shortest-diff + Batch: Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, never re-read unchanged (hash/cached), 1 edit per file with exact oldText, no scaffolding for later. Bash verify after edits land (not same call as edit it checks).\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n`;
+  const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (2-call floor): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash verify parallel → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (3-call floor): same but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\nBatch: 1 LLM call = N tool calls. Turn1: read×N parallel; Turn2: edit×N+write×N+bash parallel. Never re-read unchanged (hash/cached). Chunk edits: 1 edit per file, exact oldText, merge nearby changes. If oldText known → skip reads → 1 call. Record → 0-call replay. Prefer plan{hypotheses} single-shot (think+plan 2→1). 5-Step: Question→Delete→Simplify→Accelerate→Automate.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + read relevant files smart (only relevant) to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.\n5. Shortest-diff + Batch: Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, never re-read unchanged (hash/cached), 1 edit per file with exact oldText, no scaffolding for later. Bash verify after edits land (not same call as edit it checks).\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n`;
 
   // strict workflow run lifecycle — reset per prompt (ponytail: unconditional reset, no timestamp drift)
   pi.on("before_agent_start" as any, async (ev: any, ctx: any) => {
