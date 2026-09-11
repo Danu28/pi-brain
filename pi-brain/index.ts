@@ -86,8 +86,8 @@ function parseSince(since?: string | number): number | undefined {
   if (typeof since === "number") return since;
   const s = String(since).trim().toLowerCase();
   if (/^\d+$/.test(s)) return Number(s);
-  if (s === "24h") return Date.now() - 24*3600*1000;
-  if (s === "7d") return Date.now() - 7*24*3600*1000;
+  const m = s.match(/^(\d+)(h|d)$/);
+  if (m) return Date.now() - Number(m[1]) * (m[2]==="h"?3600000:86400000);
   const parsed = Date.parse(s);
   return isNaN(parsed) ? undefined : parsed;
 }
@@ -330,11 +330,11 @@ export default function (pi: ExtensionAPI) {
       if (qToks.length && tokenIndex.size) {
         const idSets = qToks.map(t => tokenIndex.get(t)).filter(Boolean) as Set<string>[];
         if (idSets.length) {
-          // union of hits (any token matches) — ponytail: union over intersection for recall
           const hitIds = new Set<string>();
           for (const s of idSets) for (const id of s) hitIds.add(id);
+          // ponytail: also union tag-matched episodes so tags+query doesn't miss tag-only hits
+          if (filterTags?.length) for (const e of episodes.values()) if (e.tags?.some(t=>filterTags.includes(t.toLowerCase()))) hitIds.add(e.id);
           const hits = [...hitIds].map(id => episodes.get(id)).filter(Boolean) as Episode[];
-          // if index yields hits, prefer them but still allow fallback scan for decay/tag cases
           if (hits.length) candidates = hits;
         }
       }
@@ -424,7 +424,13 @@ export default function (pi: ExtensionAPI) {
     if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
     const pooled: Episode[] = [];
     for (const q of params.cues) {
-      const hits = [...episodes.values()]
+      const qToks = tokenize(q);
+      let cand: Episode[] = [...episodes.values()];
+      if (qToks.length && tokenIndex.size) {
+        const sets = qToks.map(t=>tokenIndex.get(t)).filter(Boolean) as Set<string>[];
+        if (sets.length) { const ids=new Set<string>(); for(const s of sets) for(const id of s) ids.add(id); const hits=[...ids].map(id=>episodes.get(id)).filter(Boolean) as Episode[]; if(hits.length) cand=hits; }
+      }
+      const hits = cand
         .map((e) => ({ e, s: scoreEpisode(e, q) }))
         .filter((x) => x.s > 0)
         .sort((a, b) => b.s - a.s)
@@ -626,7 +632,9 @@ export default function (pi: ExtensionAPI) {
       const context = ranked.length
         ? ranked.map((e) => `[${e.cue}] ${e.summary}${e.detail ? " — " + e.detail.slice(0, 160) : ""}`).join("\n")
         : "(no relevant episodes — scan current dir: bash ls + read relevant files smart (only relevant) to find context)";
-      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (plan 2 calls only): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → execute(read→edit 1 file→bash) → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (plan 3 calls only): same flow but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 (update if needed) → retry execute → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + smart read only relevant files to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}`;
+      const recentThinkStrict = deliberations.slice(-1).map((d:any)=>`[think: ${d.goal}] ${d.hypotheses.join("; ")}`).join("\n");
+      const thinkBlockStrict = recentThinkStrict ? `\n\nRecent deliberation:\n${recentThinkStrict}` : "";
+      const strictInstruction = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (plan 2 calls only): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → execute(read→edit 1 file→bash) → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (plan 3 calls only): same flow but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 (update if needed) → retry execute → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.95/7d). If recall empty/no relevant → scan current dir: bash ls + smart read only relevant files to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch.\n5. Shortest-diff: read target first, edit ONE file, bash verify, no scaffolding for later.\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n\nBrain episodes for query "${query.slice(0, 120)}":\n${context}${thinkBlockStrict}`;
       // append active plan if any (ponytail: cached, no sort)
       const latestPlan = cachedLatestPlan ?? [...plans.values()].sort((a,b)=>b.ts-a.ts)[0] ?? null;
       if (latestPlan) cachedLatestPlan = latestPlan;
