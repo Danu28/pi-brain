@@ -2,6 +2,11 @@
 suggestion.html
 
 # deps / build
+# keep locally but don't track on GitHub
+pi-customization-guide.html
+pi-extensions.html
+pi-tools.html
+
 node_modules/
 dist/
 
