@@ -89,13 +89,13 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
 <nav><div class="inner">
   <span class="brand">π brain — docs</span>
   <a href="#s0">Overview</a><a href="#s1">Architecture</a><a href="#s2">How it works</a><a href="#s3">How to use</a><a href="#s4">Brain map</a>
-  <span style="margin-left:auto" class="small muted"><code>index.ts</code> · <code>SKILL.md</code> — ~1020 lines · 7 tools · tags/refs + gated inject</span>
+  <span style="margin-left:auto" class="small muted"><code>index.ts</code> · <code>SKILL.md</code> — ~1060 lines · 7 tools · tags/refs + gated inject</span>
 </div></nav>
 <main>
 
 <div class="hero">
   <h1><span class="pi">π</span>-brain docs</h1>
-  <p class="sub">How the brain-inspired extension actually works: <code>index.ts</code> (~1020 lines, one factory, 7 tools) + <code>SKILL.md</code>. Standalone <code>file://</code> — no build. One file, one <code>Map</code>, TF-IDF recall 2.0 (filters + half-life + tag boost), incremental index, relevance-gated inject, think+plan single-shot.</p>
+  <p class="sub">How the brain-inspired extension actually works: <code>index.ts</code> (~1060 lines, one factory, 7 tools) + <code>SKILL.md</code>. Standalone <code>file://</code> — no build. One file, one <code>Map</code>, TF-IDF recall 2.0 (filters + half-life + tag boost), incremental index, relevance-gated inject, think+plan single-shot.</p>
   <div class="chips">
     <span class="chip">📄 <code>pi-brain/docs.html</code> · standalone</span>
     <span class="chip">🧠 7 tools · 12 events · 1 Map + incremental index</span>
@@ -106,7 +106,7 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
     <pre class="code">remember { cue:"my-fix", summary:"lazy-load DB pool fixes cold start", tags:["infra"], refs:["pi-brain/index.ts"] }</pre>
     <pre class="code">recall { query:"cold start", tags:["infra"], since:"7d", limit:3 }</pre>
     <pre class="code">plan { goal:"fix cold start", hypotheses:["pool init eager 10s","lazy-load pool on recall"], tasks:["fix pool with lazy init","bash verify pool works"] }</pre>
-    <div class="small muted" style="margin-top:8px"><b>Cue cheat sheet:</b> <code>kebab-short</code> (2× weight), <code>tags</code> (+1.5 per tag hit, group like <code>landmine</code>), <code>refs</code> (file jump), <code>since:"7d"/"24h"/ms</code> filters recency, half-life 0.95/7d auto-decays stale.</div>
+    <div class="small muted" style="margin-top:8px"><b>Cue cheat sheet:</b> <code>kebab-short</code> (2× weight), <code>tags</code> (+1.5 per tag hit, group like <code>landmine</code>), <code>refs</code> (file jump), <code>since:"7d"/"24h"/ms</code> filters recency, half-life 0.5/7d auto-decays stale.</div>
   </div>
 </div>
 
@@ -353,13 +353,13 @@ cat .pi/skills/brain-pr-review/SKILL.md</pre>
 
 <h3>What ships vs what doesn't</h3>
 <div class="fork">
-  <div class="n c-ok tall"><b>Ships</b><span class="s"><code>index.ts</code> — one factory, 1020 lines, 7 tools<br><code>SKILL.md</code> — procedural seed (7 tools)<br><code>docs.html</code> — this file (only HTML kept)<br>No new config, no deps beyond <code>typebox</code>, no daemon.</span></div>
+  <div class="n c-ok tall"><b>Ships</b><span class="s"><code>index.ts</code> — one factory, 1060 lines, 7 tools<br><code>SKILL.md</code> — procedural seed (7 tools)<br><code>docs.html</code> — this file (only HTML kept)<br>No new config, no deps beyond <code>typebox</code>, no daemon.</span></div>
   <div class="n c-err tall"><b>Does not ship</b><span class="s">No vector DB, no embedding service, no SNN, no BCI, no visualizer, no new provider, no custom compaction LLM call. Add when a real task demands it — YAGNI.</span></div>
 </div>
 </section>
 
 <footer>
-  <div>pi-brain/docs.html · from <code>index.ts</code> (~1020 lines, 7 tools + incremental index) + <code>SKILL.md</code> · offline <code>file://</code> — the only HTML kept.</div>
+  <div>pi-brain/docs.html · from <code>index.ts</code> (~1060 lines, 7 tools + incremental index) + <code>SKILL.md</code> · offline <code>file://</code> — the only HTML kept.</div>
   <div class="small dim" style="margin-top:4px">design.html + implementation-plan.html deleted — specs served their purpose. Tokens reused — ponytail: reuse before invent.</div>
 </footer>
 

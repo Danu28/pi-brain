@@ -19,14 +19,14 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 ## Tools
 
 - `remember {cue, summary, detail?, tags?: string[] (≤8 kebab), refs?: string[] (≤5 files)}` — durable episode (`brain:episode` entry). Tags weight 1.5× in recall, refs show in TUI.
-- `recall {query?, queries?: string[] (≤5 batch), limit?, tags?: string[], source?: "remember"|"auto", since?: "7d"|"24h"|ms|ISO}` — TF-IDF ranked recall (cue 2×, summary 1×, detail 0.5× per term + tag boost + half-life 0.95/7d). Empty query + tags allowed (tag-only). Batch `queries[]` = 1 call = N recalls. Incremental token→ids index + 30s memo + fallback scan.
+- `recall {query?, queries?: string[] (≤5 batch), limit?, tags?: string[], source?: "remember"|"auto", since?: "7d"|"24h"|ms|ISO}` — TF-IDF ranked recall (cue 2×, summary 1×, detail 0.5× per term + tag boost + half-life 0.5/7d). Empty query + tags allowed (tag-only). Batch `queries[]` = 1 call = N recalls. Incremental token→ids index + 30s memo + fallback scan.
 - `think {goal, hypotheses[], conclusion?}` — PFC deliberation, injected next turn via `before_agent_start`. Unhappy path: goal must start with `debug`.
 - `plan {goal, tasks[], id?, done?, hypotheses?: string[]}` — **detailed** ordered checklist after think+creative-thinking (`[ ] Task 1` → `[x] Task 1` via `plan{id,done:[0]}`), `brain:plan` entry. **Requires 3-10 tasks, each detailed (≥10 chars) and well-split to match the user requirement** — a good plan makes execution trivial. Aim 8-10 when the requirement is multi-step; keep 3 minimum. **>10 tasks: chunk — create with first 10, then `plan{id,tasks:["remaining…"]}` appends** (validation is actionable, not a raw schema error). Single-shot: include `hypotheses` to auto-create deliberation (2 calls → 1). When all [x], `bash: git init if needed + commit`. Auto-link: when all done + hasWriteEdit, turn_end surfaces prefilled `remember` template. Example (8 tasks for "add auth flow"): `["think + analyze auth requirement & existing routes","design token schema + decide storage","implement login endpoint","implement refresh/logout","add middleware + protect routes","write client integration","verify with bash + tests","remember + habit"]` — tool stays small, output stays detailed.
 - `creative-thinking {cues: [2-3], prompt?}` — divergent synthesis fusing episodes + latest `think`. Prompt e.g. `creative-thinking neon + login into glass login` NOT `creative approach`; loose/missing auto-enriched with cues+think goal.
 - `habit {name, when, steps, variant?, force?: boolean}` — draft `.pi/skills/brain-<name>/SKILL.md`; `variant` adds alternative. Preview: if exists returns diff + "call again with force:true to confirm"; reports sanitized name + `rm -r` undo hint. Blocked if project untrusted.
 - `brain_status {}` — dashboard table: episodes | deliberations | plan | tokens | overload | recent cues + index stats; emits `brain:overload` if >80% or episodes>50.
 
-> 7 tools total (remember/recall/think/creative-thinking/plan/habit/brain_status — 7 impls). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict: scored up to 5 (1 if no match) + trace; default: 1 episode +1 deliberation gated (~250 tokens saved/turn). **Single-shot:** `plan{hypotheses}` creates deliberation (2→1). **Compact:** <15→3 else 5, overload→5. **Trim:** `context` dedups duplicate episode blocks then tails to 20.
+> 7 tools total (remember/recall/think/creative-thinking/plan/habit/brain_status — 7 impls). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict: scored top-3 (1 if no match) + trace; default: 1 episode +1 deliberation gated (~250 tokens saved/turn). **Single-shot:** `plan{hypotheses}` creates deliberation (2→1). **Compact:** <15→3 else 5, overload→5. **Trim:** `context` dedups duplicate episode blocks then tails to 20.
 
 ## Command
 
@@ -36,7 +36,7 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 
 ## Behavior
 
-- Default (`off`): gated 1 episode +1 deliberation auto-inject via `before_agent_start` (strict gets up to 5 scored).
+- Default (`off`): gated 1 episode +1 deliberation auto-inject via `before_agent_start` (strict gets top-3 scored).
 - Strict (`on`): 7-rule workflow enforced by extension (not docs): **Happy (2-call floor): recall → think → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel → plan #2 done:[all] → remember → habit → git commit**
   **Unhappy (3-call floor): same flow but 3 plan calls — plan #1 → failure → think{goal:'debug <Task N> — <tool>: <err>', hypotheses:[cause,fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember (enforced: `tool_call` blocks write/edit/bash until debug-think).**
   **Batch: 1 LLM call = N tool calls. Turn1 read×N; Turn2 edit×N+write×N+bash. Chunk edits: 1 edit/file, exact oldText, merge nearby. If oldText known → 1 call. Record → 0-call replay. 5-Step: Question→Delete→Simplify→Accelerate→Automate. // ponytail: deleted readCache, add per-path cache if throughput matters**
@@ -64,7 +64,7 @@ Rule: Turn1 `read×N` parallel → Turn2 `edit×N+write×N+bash` parallel. 1 edi
 
 ## Calibration knobs (top of index.ts)
 
-`MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.95`, `RECALL_MEMO_MS=30000`, `PRUNE_WARN=35/PRUNE_CAP=40`, `REMEMBER_BOOST=2.0`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change. Batch: `queries[]` up to 5. SYN override: `pi-brain.syn.json` or `~/.pi/agent/pi-brain.syn.json` merges into SYN.
+`MAX_BYTES`/`MAX_LINES` (50KB/2K), `TAG_BOOST=1.5`, `HALF_LIFE_DAYS=7`, `HALF_LIFE_FACTOR=0.5`, `RECALL_MEMO_MS=30000`, `PRUNE_WARN=35/PRUNE_CAP=40`, `REMEMBER_BOOST=2.0`, `COMPACT_SMALL=3`, `COMPACT_LARGE=5` — tune without code change. Batch: `queries[]` up to 5. SYN override: `pi-brain.syn.json` or `~/.pi/agent/pi-brain.syn.json` merges into SYN.
 
 ## Quickstart (60s)
 
