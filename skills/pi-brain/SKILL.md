@@ -14,7 +14,7 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 - Reason explicitly before acting → `think` (deliberation scratchpad) or single-shot `plan{hypotheses}`
 - Combine distant ideas for novelty → `creative-thinking`
 - Repeated correction → `habit` (+ preview + undo hint)
-- How full is memory → `brain_status` or `/pi-brain status` dashboard
+- How full is memory → `brain-status` or `/pi-brain status` dashboard
 
 ## Tools
 
@@ -24,9 +24,9 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 - `plan {goal, tasks[], id?, done?, hypotheses?: string[]}` — **detailed** ordered checklist after think+creative-thinking (`[ ] Task 1` → `[x] Task 1` via `plan{id,done:[0]}`), `brain:plan` entry. **Requires 3-10 tasks, each detailed (≥10 chars) and well-split to match the user requirement** — a good plan makes execution trivial. Aim 8-10 when the requirement is multi-step; keep 3 minimum. **>10 tasks: chunk — create with first 10, then `plan{id,tasks:["remaining…"]}` appends** (validation is actionable, not a raw schema error). Single-shot: include `hypotheses` to auto-create deliberation (2 calls → 1). When all [x], `bash: git init if needed + commit`. Auto-link: when all done + hasWriteEdit, turn_end surfaces prefilled `remember` template. Example (8 tasks for "add auth flow"): `["think + analyze auth requirement & existing routes","design token schema + decide storage","implement login endpoint","implement refresh/logout","add middleware + protect routes","write client integration","verify with bash + tests","remember + habit"]` — tool stays small, output stays detailed.
 - `creative-thinking {cues: [2-3], prompt?}` — divergent synthesis fusing episodes + latest `think`. Prompt e.g. `creative-thinking neon + login into glass login` NOT `creative approach`; loose/missing auto-enriched with cues+think goal.
 - `habit {name, when, steps, variant?, force?: boolean}` — draft `.pi/skills/brain-<name>/SKILL.md`; `variant` adds alternative. Preview: if exists returns diff + "call again with force:true to confirm"; reports sanitized name + `rm -r` undo hint. Blocked if project untrusted.
-- `brain_status {}` — dashboard table: episodes | deliberations | plan | tokens | overload | recent cues + index stats; emits `brain:overload` if >80% or episodes>50.
+- `brain-status {}` — dashboard table: episodes | deliberations | plan | tokens | overload | recent cues + index stats; emits `brain:overload` if >80% or episodes>50.
 
-> 7 tools total (remember/recall/think/creative-thinking/plan/habit/brain_status — 7 impls). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict: scored top-3 (1 if no match) + trace; default: 1 episode +1 deliberation gated (~250 tokens saved/turn). **Single-shot:** `plan{hypotheses}` creates deliberation (2→1). **Compact:** <15→3 else 5, overload→5. **Trim:** `context` dedups duplicate episode blocks then tails to 20.
+> 7 tools total (remember/recall/think/creative-thinking/plan/habit/brain-status — 7 impls). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict: scored top-3 (1 if no match) + trace; default: 1 episode +1 deliberation gated (~250 tokens saved/turn). **Single-shot:** `plan{hypotheses}` creates deliberation (2→1). **Compact:** <15→3 else 5, overload→5. **Trim:** `context` dedups duplicate episode blocks then tails to 20.
 
 ## Command
 

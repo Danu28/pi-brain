@@ -133,7 +133,7 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
 
 <div class="twrap"><table class="tbl">
 <tr><th>File</th><th>Purpose</th><th>Lines</th></tr>
-<tr><td><code>pi-brain/index.ts</code></td><td>Single factory <code>export default function(pi: ExtensionAPI)</code> — 7 tools (remember/recall/think/creative-thinking/plan/habit/brain_status) + 12 event handlers + <code>Map&lt;string,Episode&gt;</code> + deliberations</td><td>1020</td></tr>
+<tr><td><code>pi-brain/index.ts</code></td><td>Single factory <code>export default function(pi: ExtensionAPI)</code> — 7 tools (remember/recall/think/creative-thinking/plan/habit/brain-status) + 12 event handlers + <code>Map&lt;string,Episode&gt;</code> + deliberations</td><td>1020</td></tr>
 <tr><td><code>pi-brain/SKILL.md</code></td><td>Procedural seed: when to use 7 tools — now with <code>think</code>/<code>creative-thinking</code> for reasoning/creativity</td><td>~45</td></tr>
 <tr><td><code>pi-brain/docs.html</code></td><td>This docs file — architecture, how it works, how to use, brain mapping (the only HTML kept)</td><td>~360</td></tr>
 </table></div>
@@ -193,7 +193,7 @@ sort by score desc, then ts desc
   <div class="a-d">▼</div>
   <div class="n c-pi"><b>state: episodes Map + entry renderer + session_start</b><span class="s">~35 lines. The hippocampus.</span></div>
   <div class="a-d">▼</div>
-  <div class="n c-mem"><b>tools: remember / recall / think / creative-thinking / plan / habit / brain_status</b><span class="s">~260 lines. Only public surface the model sees (reasoning + creativity).</span></div>
+  <div class="n c-mem"><b>tools: remember / recall / think / creative-thinking / plan / habit / brain-status</b><span class="s">~260 lines. Only public surface the model sees (reasoning + creativity).</span></div>
   <div class="a-d">▼</div>
   <div class="n c-sense"><b>events: input · before_agent_start · context · tool_result · session_before_compact · resources_discover · tool_call · before_provider_request (trim) · session_shutdown</b><span class="s">~100 lines. Gates, sculptors, hooks, guards — now with real payload trim + deliberation inject.</span></div>
   <div class="a-d">▼</div>
@@ -268,7 +268,7 @@ sort by score desc, then ts desc
 <tr><td><code>plan</code></td><td><code>{ goal, tasks[], hypotheses?, id?, done? }</code></td><td><code>[ ]/[x] checklist + deliberation</code></td><td>Ordered tasks after think (single-shot saves 1 call)</td></tr>
 <tr><td><code>creative-thinking</code></td><td><code>{ cues: [2-3], prompt? }</code></td><td><code>Synthesis prompt + sources + deliberation</code></td><td>Fuse distant episodes + latest think for novelty (creativity)</td></tr>
 <tr><td><code>habit</code></td><td><code>{ name, when, steps, variant? }</code></td><td><code>Drafted …/SKILL.md</code></td><td>Repeated correction → SKILL + mutate alternative</td></tr>
-<tr><td><code>brain_status</code></td><td><code>{}</code></td><td><code>Episodes / Tokens / overload</code></td><td>How full is brain? (emits overload if >80%)</td></tr>
+<tr><td><code>brain-status</code></td><td><code>{}</code></td><td><code>Episodes / Tokens / overload</code></td><td>How full is brain? (emits overload if >80%)</td></tr>
 </table></div>
 
 <h3>Examples</h3>
@@ -290,7 +290,7 @@ habit { name:"pr-review",
 </div>
 <div>
 <pre class="code">// metacognition
-brain_status {} → Episodes: 12
+brain-status {} → Episodes: 12
                Tokens: 8420 / 128000
 
 // auto-encode happens without calling remember:
@@ -329,7 +329,7 @@ cat .pi/skills/brain-pr-review/SKILL.md</pre>
   <div class="card"><h4>5 · Associative memory → recall (BM25/substring)</h4><p>Partial cue retrieves whole episode; no index lookup — pattern completes via score + recency.</p></div>
   <div class="card"><h4>6 · Consolidation during rest → session_before_compact</h4><p>Hippocampus replays top 5 at compact; cortex (prompt) slowly absorbs. Offline, lossy → generalization (feature).</p></div>
   <div class="card"><h4>7 · Embodied &amp; grounded → edit/write/bash auto-encode</h4><p>Cognition coupled to motor output; every successful effector leaves an engram without explicit remember.</p></div>
-  <div class="card"><h4>8 · Metacognition → brain_status + cingulate patch</h4><p>Watches itself: <code>getContextUsage</code> reports load; error monitor appends recall hint; knows when it doesn't know.</p></div>
+  <div class="card"><h4>8 · Metacognition → brain-status + cingulate patch</h4><p>Watches itself: <code>getContextUsage</code> reports load; error monitor appends recall hint; knows when it doesn't know.</p></div>
 </div>
 
 <h3>12 regions → pi mechanisms (from design §3 table)</h3>
