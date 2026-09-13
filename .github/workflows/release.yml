@@ -21,6 +21,16 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VER=$(node -p "require('./package.json').version")
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "package.json: $PKG_VER | tag: $TAG_VER"
+          if [ "$PKG_VER" != "$TAG_VER" ]; then
+            echo "::error::tag v${TAG_VER} does not match package.json version ${PKG_VER} — bump with 'npm version' first"
+            exit 1
+          fi
+
       - name: Typecheck + test + build (prepublishOnly)
         run: npm publish --dry-run
 
