@@ -28,6 +28,9 @@ export function registerPlan(pi: ExtensionAPI) {
             const norm = t.trim().toLowerCase();
             if (!existing.has(norm)) { pl.tasks.push({ title: truncate(t), done: false }); existing.add(norm); }
           }
+          // validate after merge — prevents bypassing 3..10 / ≥10 chars via updates
+          const taskErr = planTaskError(pl.tasks.map(t=>t.title));
+          if (taskErr) return { content: [{ type: "text", text: taskErr }], details: { error: "invalid tasks", count: pl.tasks.length } } as any;
         }
         if (params.goal) pl.goal = truncate(params.goal);
         pl.ts = Date.now();

@@ -29,7 +29,6 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
     // strict sequencing: creative-thinking must follow think — surface hint but still allow synthesis from episodes alone
     const hint = "[hint: creative-thinking is post-think — call think{goal, hypotheses} first so synthesis fuses hypotheses × episodes; proceeding with episodes only]\n";
     if (!unique.length) return { content: [{ type: "text", text: "No episodes found for cues and no think yet. Call think first, then creative-thinking with 2-3 cues." }], details: { episodes: [] } };
-    // prepend hint to context below by reusing recentThink as hint marker
     const thinkGoal2 = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
     const raw2 = params.prompt?.trim();
     const isLoose2 = !raw2 || raw2.length < 15 || /^creative approach/i.test(raw2);
@@ -38,7 +37,7 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
     const text2 = `${hint}${synthesisPrompt2}\n\n${sources2}\n\n→ Call think first, then re-run creative-thinking to fuse hypotheses × episodes into a variant not in either source.`;
     return { content: [{ type: "text", text: truncate(text2) }], details: { episodes: unique, cues: params.cues, hint: "missing-think" } };
   }
-  if (!unique.length && !recentThink) return { content: [{ type: "text", text: "No episodes found for cues. Use remember first." }], details: { episodes: [] } };
+  if (!unique.length) return { content: [{ type: "text", text: "No episodes found for cues. Use remember first — or think first then creative-thinking for synthesis from deliberation alone." }], details: { episodes: [] } };
   const thinkGoal = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
   const raw = params.prompt?.trim();
   const isLoose = !raw || raw.length < 15 || /^creative approach/i.test(raw);
