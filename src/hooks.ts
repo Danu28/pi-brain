@@ -20,6 +20,7 @@ export function registerHooks(pi: ExtensionAPI) {
   // T09: hippocampal hooks — auto-encode + consolidation (sleep replay) + T2 filter + T11 feedback
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
     if (ctx?.signal?.aborted) return;
+    if (!brain.brainStrict) return; // really off — no auto-encode, no failure tracking
     if (["edit", "write"].includes(ev?.toolName) && !ev?.isError) {
       const cue = `${ev.toolName}:${(ev.input?.path ?? "").toString().slice(0, 30)}`;
       const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
@@ -86,6 +87,13 @@ export function registerHooks(pi: ExtensionAPI) {
   });
 
   pi.on("tool_call" as any, async (ev: any, ctx: any) => {
+    if (!brain.brainStrict) {
+      // really off — brain tools not discoverable/active (except brain-status + command)
+      if (["remember", "recall", "think", "creative-thinking", "plan", "habit"].includes(ev.toolName)) {
+        return { block: true, reason: "pi-brain is OFF — run /pi-brain on to enable. No injection, footer, or auto-encode active." } as any;
+      }
+      return; // non-brain tools pass through, no brain guards
+    }
     // rm -rf guard first (highest priority) — covers rm -fr / -r -f / --recursive --force
     if (ev?.toolName === "bash") {
       const cmd: string = ev?.input?.command ?? "";
@@ -119,7 +127,8 @@ export function registerHooks(pi: ExtensionAPI) {
 
   // Rule 5: encode-or-it-didn't-happen — once after plan done (not per-turn)
   pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
-    if (brain.brainStrict && brain.hasWriteEdit && !brain.hasRemember && !brain.rule5Warned && isPlanDone()) {
+    if (!brain.brainStrict) return;
+    if (brain.hasWriteEdit && !brain.hasRemember && !brain.rule5Warned && isPlanDone()) {
       brain.rule5Warned = true;
       try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
     }

@@ -21,6 +21,8 @@ export function registerInjection(pi: ExtensionAPI) {
     try { const u = (ctx as any)?.getContextUsage?.() ?? (ev as any)?.getContextUsage?.(); if (u?.percent) pct = u.percent; else if (u?.used && u?.total) pct = Math.round(u.used/u.total*100); } catch {}
     // T2 periodic prune if many
     if (brain.episodes.size > PRUNE_WARN) pruneExpired(pi);
+    // really off = no injection at all (no light 1-episode, no systemPrompt, not discoverable)
+    if (!brain.brainStrict) return;
     // strict mode: scored recall + stable prefix (T6) + gist (T3) + budget (T10)
     if (brain.brainStrict) {
       const query: string = ev?.prompt ?? "";

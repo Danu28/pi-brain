@@ -71,6 +71,7 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
+    if (!brain.brainStrict) return; // really off — no compaction inject
     // T4 scored compaction (reuse scoreEpisode + deliberation goal)
     const query = brain.deliberations[brain.deliberations.length-1]?.goal ?? (brain.cachedLatestPlan?.goal ?? "");
     let ranked: BrainEpisode[];
