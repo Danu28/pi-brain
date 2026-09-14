@@ -39,7 +39,18 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
     const text2 = `${hint}${synthesisPrompt2}\n\n${sources2}\n\n→ Call think first, then re-run creative-thinking to fuse hypotheses × episodes into a variant not in either source.`;
     return { content: [{ type: "text", text: truncate(text2) }], details: { episodes: unique, cues: params.cues, hint: "missing-think" } };
   }
-  if (!unique.length) return { content: [{ type: "text", text: "No episodes found for cues. Use remember first — or think first then creative-thinking for synthesis from deliberation alone." }], details: { episodes: [] } };
+  if (!unique.length) {
+    // deliberation-only mode: creative layer on top of think — episodes are optional enhancement
+    const thinkGoal = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
+    const raw = params.prompt?.trim();
+    const isLoose = !raw || raw.length < 15 || /^creative approach/i.test(raw);
+    const synthesisPrompt = isLoose
+      ? (raw ? `${raw} — fuse ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}` : `Create a novel variant from think: ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}`)
+      : raw;
+    const deliberationBlock = `Deliberation:\n${recentThink}`;
+    const text = `${synthesisPrompt}\n\n${deliberationBlock}\n\n[deliberation-only: no episodes matched cues — synthesizing 1 layer on top of think hypotheses into novel variant]\n\n→ Creative layer: recombine + twist think hypotheses into variant not in deliberation alone (episodes would enhance if present).`;
+    return { content: [{ type: "text", text: truncate(text) }], details: { episodes: [], cues: params.cues, deliberation: recentThink, mode: "deliberation-only" } };
+  }
   const thinkGoal = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
   const raw = params.prompt?.trim();
   const isLoose = !raw || raw.length < 15 || /^creative approach/i.test(raw);
@@ -57,7 +68,7 @@ export function registerCreative(pi: ExtensionAPI) {
   pi.registerTool({
     name: "creative-thinking",
     label: "Creative Thinking",
-    description: "Post-think fuse: takes latest think {goal, hypotheses} + cues[2..3] → novel variant not in either source. STRICTLY after think (reads deliberations[-1]; hint if missing). Fuses hypotheses × episode patterns (delegates recall ranking). Prompt e.g. 'neon + login → glass login' NOT 'creative approach' (loose auto-enriched with cues+think goal). No vector DB.",
+    description: "Post-think creative layer: 1 layer on top of think — takes latest think {goal, hypotheses} + optional cues[2..3] episodes → novel variant not in think alone. Episodes are optional enhancement (fused if recall hits, otherwise deliberation-only). STRICTLY after think (reads deliberations[-1]; hint if missing). Prompt e.g. 'neon + login → glass login' NOT 'creative approach' (loose auto-enriched with cues+think goal). No vector DB.",
     parameters: creativeThinkingParams,
     async execute(_id, params, signal) { return creativeThinkingExecute(_id, params, signal); },
   });
