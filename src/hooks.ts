@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_TTL_MS } from "./knobs";
 import { indexEpisode } from "./recall";
 import { scoreBase } from "./scoring";
-import { brain, isPlanDone } from "./state";
+import { brain, isPlanDone, latestPlan } from "./state";
 import type { BrainEpisode } from "./types";
 import { isNoiseBash, truncate } from "./util";
 
@@ -51,15 +51,26 @@ export function registerHooks(pi: ExtensionAPI) {
         brain.rule5Warned = false;
       }
     }
-    // unhappy path: only write/edit/bash failures block retry (narrowed from "any failure")
-    if (ev?.isError && ["write", "edit", "bash"].includes(ev?.toolName)) {
-      brain.needsDebugThink = true;
-      brain.needsPlanUpdate = false;
-      brain.thinkSatisfied = false;
-      try { (ctx as any)?.ui?.notify?.("Strict unhappy path: failure detected — call think{goal:'debug <task>', hypotheses:[...]} before retry.", "warning"); } catch {}
-      const hint = "\n[ brain: failure requires debug think — call think{goal:'debug <task>', hypotheses:[cause,fix]} before retry ]";
-      const cur = ev.content?.[0]?.text ?? "";
-      return { content: [{ type: "text", text: truncate(cur + hint) }] } as any;
+    // unhappy path: failure → rethink — precise: strict + active plan + mutation tool + (isError or bash logical fail)
+    // logical bash fail = output contains fail/error without success, even if isError false (tests, build)
+    {
+      const isMutation = ["write", "edit", "bash"].includes(ev?.toolName);
+      const plan = latestPlan();
+      const hasActivePlan = !!plan && !isPlanDone();
+      if (brain.brainStrict && hasActivePlan && isMutation) {
+        const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
+        const isBashLogicalFail = ev.toolName === "bash" && !ev.isError && output.length > 20 && /\b(fail(ed)?|error|exception|ENOENT|not found|cannot|unable)\b/i.test(output) && !/\b(passed|success|ok\b)/i.test(output);
+        const isFailure = ev.isError || isBashLogicalFail;
+        if (isFailure) {
+          brain.needsDebugThink = true;
+          brain.needsPlanUpdate = false;
+          brain.thinkSatisfied = false;
+          try { (ctx as any)?.ui?.notify?.("Strict unhappy path: failure detected — call think{goal:'debug <Task N: " + (ev.toolName + ":" + (ev.input?.path ?? ev.input?.command ?? "").toString().slice(0,30)) + "', hypotheses:[cause,fix]} before retry.", "warning"); } catch {}
+          const hint = "\n[ brain: failure → rethink — call think{goal:'debug <failed Task N: " + ev.toolName + ">', hypotheses:[root cause, fix]} then plan{id,done} before retry ]";
+          const cur = ev.content?.[0]?.text ?? "";
+          return { content: [{ type: "text", text: truncate(cur + hint) }] } as any;
+        }
+      }
     }
   });
 
