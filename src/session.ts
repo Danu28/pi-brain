@@ -58,10 +58,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       }
       // rebuild incremental index
       rebuildIndex();
-      // T2 prune expired after rebuild
+      // T2 prune expired after rebuild (also does LRU eviction if >PRUNE_CAP, so single call suffices)
       pruneExpired(pi);
-      // also prune if over 40
-      if (brain.episodes.size > PRUNE_CAP) pruneExpired(pi);
       // file wins: /pi-brain on stays on across sessions until /pi-brain off
       const fileMode = readMode();
       if (fileMode !== undefined) brain.brainStrict = fileMode;

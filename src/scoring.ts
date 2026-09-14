@@ -40,8 +40,8 @@ const SYN: Record<string, string[]> = {
   ui: ["ui","frontend","interface","view"],
 };
 // SYN override — pi-brain.syn.json merges if present (add when miss >20%)
-try { const _syn = JSON.parse(readFileSync(join(process.cwd(),"pi-brain.syn.json"),"utf8")); Object.assign(SYN, _syn); } catch {}
-try { const _syn2 = JSON.parse(readFileSync(join(homedir(),".pi","agent","pi-brain.syn.json"),"utf8") as any); Object.assign(SYN, _syn2); } catch {}
+try { const _syn = JSON.parse(readFileSync(join(process.cwd(),"pi-brain.syn.json"),"utf8")); Object.assign(SYN, _syn); } catch (e) { try { const msg = String((e as any)?.message ?? e); if (msg && !msg.includes("ENOENT")) console.warn("[pi-brain] invalid pi-brain.syn.json in cwd:", msg); } catch {} }
+try { const _syn2 = JSON.parse(readFileSync(join(homedir(),".pi","agent","pi-brain.syn.json"),"utf8") as any); Object.assign(SYN, _syn2); } catch (e) { try { const msg = String((e as any)?.message ?? e); if (msg && !msg.includes("ENOENT")) console.warn("[pi-brain] invalid ~/.pi/agent/pi-brain.syn.json:", msg); } catch {} }
 
 export function expandTokens(toks: string[]): string[] {
   const out = new Set<string>();
@@ -96,12 +96,15 @@ export function scoreBase(e: BrainEpisode, query: string, filterTags?: string[])
     s += sumToks.filter((x) => x === t).length * 1;
     s += detToks.filter((x) => x === t).length * 0.5;
   }
-  // tag boost uses normalized tags (T5)
+  // tag boost uses normalized tags (T5) — avoid double-count when filterTags overlaps expanded
   const normFilterTags = normalizeTags(filterTags as any);
   if (e.tags?.length) {
     const eTagsNorm = normalizeTags(e.tags) ?? [];
-    for (const t of expanded) if (eTagsNorm.includes(t)) s += TAG_BOOST;
-    if (normFilterTags?.length) for (const ft of normFilterTags) if (eTagsNorm.includes(ft)) s += TAG_BOOST;
+    if (normFilterTags?.length) {
+      for (const ft of normFilterTags) if (eTagsNorm.includes(ft)) s += TAG_BOOST;
+    } else {
+      for (const t of expanded) if (eTagsNorm.includes(t)) s += TAG_BOOST;
+    }
   }
   // tag-only recall base score — per-tag boost
   if (!hasQuery && normFilterTags?.length && e.tags?.length) {
