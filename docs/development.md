@@ -37,19 +37,17 @@ npm run pack         # npm pack --dry-run (inspect tarball)
 ## Publishing
 
 ```bash
-npm version patch|minor|major   # bumps + tags (keeps package.json ↔ git tag in sync)
+npm version patch|minor|major   # bumps package.json + creates git tag v* (keeps in sync)
 git push --tags
-# release.yml publishes to npm on the v* tag (npm publish --access public)
 ```
 
-`prepublishOnly` runs `typecheck → test → build` automatically.
+No npm publish — install is via `pi install git:github.com/Danu28/pi-brain` (or pinned `@v1.0.0`).
 
-Pre-publish sanity checklist (from the [pi publishing guide](https://www.pi-map.org/guides/publishing-extensions/)):
+Pre-publish sanity checklist:
 
-1. `npm run pack` lists only `dist/`, `skills/`, `docs/`, README, LICENSE, CHANGELOG.
-2. `npm link` + `pi install link:@danu28/pi-brain` then `/reload` — all 7 tools work.
-3. Fresh shell `pi install npm:@danu28/pi-brain` — `/pi-brain status` responds.
-4. `pi install git:github.com/Danu28/pi-brain@v1.0.0` works from a clean clone.
+1. `npm run typecheck && npm test && npm run build` passes.
+2. `pi -e ./src/index.ts` then `/reload` — all 7 tools work.
+3. Fresh clone `pi install git:github.com/Danu28/pi-brain@v1.0.0` — `/pi-brain status` responds.
 
 ## Conventions
 

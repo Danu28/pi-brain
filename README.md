@@ -7,14 +7,13 @@ Zero runtime deps beyond the pi-bundled core (`@earendil-works/pi-coding-agent`,
 ## Install
 
 ```bash
-# from npm (recommended, versioned)
-pi install npm:@danu28/pi-brain
+# from git (recommended, versioned — can pin: @v1.0.0)
+pi install git:github.com/Danu28/pi-brain
 
-# or directly from git (can pin: @v1.0.0)
 pi install git:github.com/Danu28/pi-brain@v1.0.0
 
-# load once without installing
-pi -e npm:@danu28/pi-brain
+# load once without installing (local dev)
+pi -e ./src/index.ts
 ```
 
 Then restart `pi` (or run `/reload`). Verify with `/pi-brain status` or `pi list`.
@@ -37,7 +36,7 @@ Review the source before installing; only install packages you trust.
 
 | Tool | What |
 |---|---|
-| `remember` | encode episode (`cue`, `summary`, `detail?`, `tags?`, `refs?`) — exact cue → upsert, similar ≥3 → preview unless `force:true` |
+| `remember` | encode episode (`cue`, `summary`, `detail?`, `tags?`, `refs?`) — exact cue → upsert, similar ≥5 → preview unless `force:true` |
 | `recall` | TF-IDF recall by cue/query, ranked; batch `queries[]`, filters `tags/source/since`, tag-only recall |
 | `think` | PFC scratchpad `goal + hypotheses[1..3]`, injected next turn |
 | `creative-thinking` | fuse 2–3 cues + latest think into a novel approach |
@@ -68,8 +67,6 @@ npm install       # dev tooling (tsup, typescript, vitest)
 npm run typecheck # tsc --noEmit
 npm test          # vitest — scoring/validation unit tests
 npm run build     # tsup → dist/index.js + dist/index.d.ts
-npm run pack      # npm pack --dry-run — inspect the tarball
-npm publish       # publishes after prepublishOnly checks
 ```
 
 ## License

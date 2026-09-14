@@ -40,9 +40,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build",
-    "pack": "npm pack --dry-run"
+    "test": "vitest run"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
