@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { planTaskError } from "../scoring";
+import { planTaskError } from "../validation";
 import { brain, renderPlan } from "../state";
 import type { BrainPlan, Deliberation } from "../types";
 import { truncate } from "../util";

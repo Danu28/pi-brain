@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { expandTokens, normalizeTags, scoreBase, tokenize } from "../scoring";
+import { avgIdf, expandTokens, normalizeTags, scoreBase, tokenize } from "../scoring";
 import { indexEpisode, unindexEpisode } from "../recall";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
@@ -46,14 +46,13 @@ export function registerRemember(pi: ExtensionAPI) {
       }
       // similarity audit: decay-exempt (scoreBase) + IDF + source filter — 3→5 cuts false positives
       const query = `${params.cue} ${params.summary}`;
-      const N = brain.episodes.size;
       const terms = [...new Set(expandTokens(tokenize(query)))];
+      const idf = avgIdf(terms);
       const scored = [...brain.episodes.values()]
         .filter((e) => e.source !== "auto")
         .map((e) => {
           const base = scoreBase(e, query, tags);
           if (base === 0) return { e, s: 0 };
-          const idf = terms.length ? terms.map(t => Math.log((N+1)/((brain.tokenIndex.get(t)?.size ?? 0)+1))+1).reduce((a,b)=>a+b,0)/terms.length : 1;
           return { e, s: base * idf };
         })
         .filter((x) => x.s >= 5)

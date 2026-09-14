@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { RECALL_MEMO_MS } from "../knobs";
-import { expandTokens, normalizeTags, parseSince, scoreEpisode, tokenize } from "../scoring";
+import { avgIdf, expandTokens, normalizeTags, parseSince, scoreEpisode, tokenize } from "../scoring";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
 import { truncate } from "../util";
@@ -66,14 +66,12 @@ export function registerRecall(pi: ExtensionAPI) {
         }
         return true;
       });
-      const N = brain.episodes.size;
+      const terms = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
+      const idf = avgIdf(terms);
       const scored = candidates
         .map((e) => {
           const raw = Math.max(...queries.map(q => scoreEpisode(e, q, filterTags)));
           if (raw === 0) return { e, s: 0 };
-          // idf=log((N+1)/(df+1))+1 per expanded term — TF without IDF made common tokens dominate
-          const terms = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
-          const idf = terms.length ? terms.map(t => Math.log((N+1)/((brain.tokenIndex.get(t)?.size ?? 0)+1))+1).reduce((a,b)=>a+b,0)/terms.length : 1;
           return { e, s: raw * idf };
         })
         .filter((x) => x.s > 0 || queries.every(q => q.trim() === "") || (filterTags?.length ? true : false))

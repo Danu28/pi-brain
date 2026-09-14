@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { brain } from "./state";
 import type { BrainEpisode } from "./types";
 
 export function tokenize(s: string): string[] {
@@ -123,11 +124,13 @@ export function scoreEpisode(e: BrainEpisode, query: string, filterTags?: string
   return base * decay * sourceBoost(e);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-shadow
-export function planTaskError(tasks: string[]): string | undefined {
-  if (tasks.length < 3) return `plan requires ≥3 detailed tasks (got ${tasks.length}) — split into 3-10 well-structured steps. Example: ["analyze requirement & existing code","update index.ts core logic","update docs & verify"]`;
-  if (tasks.length > 10) return `plan got ${tasks.length} tasks — max 10. Chunk it: create with the first 10, then append plan{id:"<id>", tasks:["remaining…"]}. Or merge related steps.`;
-  const short = tasks.filter((t) => t.trim().length < 10);
-  if (short.length) return `plan tasks must be detailed (≥10 chars each) — short: "${short[0].slice(0,30)}" — make each concrete and actionable (what file, what change)`;
-  return undefined;
+// SRP: shared IDF helper — single place for avg log((N+1)/(df+1))+1 (used by remember + recall)
+export function avgIdf(terms: string[]): number {
+  if (!terms.length) return 1;
+  const N = brain.episodes.size;
+  const sum = terms.reduce((acc, t) => acc + Math.log((N + 1) / ((brain.tokenIndex.get(t)?.size ?? 0) + 1)) + 1, 0);
+  return sum / terms.length;
 }
+
+// re-export for backward compat — single source lives in validation.ts (SRP: scoring ≠ validation)
+export { planTaskError } from "./validation";
