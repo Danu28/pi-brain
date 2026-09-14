@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BUDGET_STOP_PCT, BUDGET_WARN_PCT, PRUNE_WARN } from "./knobs";
 import { pruneExpired } from "./recall";
-import { compressEpisodes, scoreEpisode } from "./scoring";
+import { compressEpisodes } from "./gist";
+import { scoreEpisode } from "./scoring";
 import { brain, latestPlan, renderPlan } from "./state";
 import type { BrainEpisode } from "./types";
 

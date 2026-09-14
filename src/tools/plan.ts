@@ -1,8 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createDeliberation } from "../deliberation";
 import { planTaskError } from "../validation";
 import { brain, renderPlan } from "../state";
-import type { BrainPlan, Deliberation } from "../types";
+import type { BrainPlan } from "../types";
 import { truncate } from "../util";
 
 export function registerPlan(pi: ExtensionAPI) {
@@ -41,14 +42,11 @@ export function registerPlan(pi: ExtensionAPI) {
         const text = renderPlan(pl) + `\n(id: ${pl.id})`;
         return { content: [{ type: "text", text: truncate(text) }], details: { plan: pl } };
       }
-      // single-shot: hypotheses → auto-create deliberation (2 calls → 1) — prefer this, 2 hypotheses min for real deliberation
+      // single-shot: hypotheses → auto-create deliberation via shared helper (D4 SRP: plan delegates to think-owned createDeliberation)
       if (params.hypotheses?.length) {
         if (params.hypotheses.length < 2) return { content: [{ type: "text", text: "plan single-shot: hypotheses needs 2-3 detailed (≥10 chars each) — deliberation requires 2 approaches" }], details: { error: "hypotheses too few" } } as any;
         if (params.hypotheses.some((h: string) => h.trim().length < 10)) return { content: [{ type: "text", text: "plan hypotheses must be detailed (≥10 chars each)" }], details: { error: "hypotheses not detailed" } } as any;
-        const entry: Deliberation = { goal: params.goal ?? "plan deliberation", hypotheses: params.hypotheses.map((h: string) => truncate(h)), ts: Date.now() };
-        brain.deliberations.push(entry);
-        if (brain.deliberations.length > 10) brain.deliberations.shift();
-        await (pi as any).appendEntry?.("brain:deliberation", entry);
+        const entry = await createDeliberation(pi as any, params.goal ?? "plan deliberation", params.hypotheses as string[]);
         brain.thinkSatisfied = true;
         brain.needsDebugThink = false;
         if (entry.goal.toLowerCase().trim().startsWith("debug")) brain.needsPlanUpdate = true;

@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { gistForEpisode } from "../gist";
 import { rankedForQuery } from "../recall";
-import { gistForEpisode } from "../scoring";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
 import { truncate } from "../util";

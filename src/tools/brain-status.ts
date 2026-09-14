@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, PRUNE_CAP, PRUNE_WARN, REMEMBER_BOOST, TAG_BOOST } from "../knobs";
 // C5/C6 bucket C: overload uses PRUNE_CAP, prune transparency via exactCueIndex + memo stats
-import { estTokens, gistForEpisode } from "../scoring";
+import { estTokens, gistForEpisode } from "../gist";
 import { brain } from "../state";
 
 export function registerBrainStatus(pi: ExtensionAPI) {

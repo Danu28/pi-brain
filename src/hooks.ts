@@ -6,6 +6,10 @@ import { brain, isPlanDone, latestPlan } from "./state";
 import type { BrainEpisode } from "./types";
 import { isNoiseBash, truncate } from "./util";
 
+// ── D2 hooks split: 3 logical sections — auto-encode / guards / lifecycle ──
+// keep single file barrel for pi API (registerHooks) but isolate duties
+
+// ── auto-encode ──
 async function encodeAutoEpisode(pi: ExtensionAPI, cue: string, summary: string, markDirty: boolean) {
   if (!summary) return;
   const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
@@ -14,6 +18,24 @@ async function encodeAutoEpisode(pi: ExtensionAPI, cue: string, summary: string,
   indexEpisode(ep);
   brain.recallMemo.clear();
   if (markDirty) { brain.hasWriteEdit = true; brain.hasRemember = false; }
+}
+
+// ── guards helpers ──
+function isRmRfCommand(cmd: string): boolean {
+  const low = cmd.toLowerCase();
+  return /\brm\b/.test(low) && (/\s-[a-z]*r[a-z]*f/.test(low) || (low.includes("--recursive") && low.includes("--force")));
+}
+function isBashLogicalFail(output: string, isError: boolean, toolName: string): boolean {
+  return toolName === "bash" && !isError && output.length > 20 && /\b(fail(ed)?|error|exception|ENOENT|not found|cannot|unable)\b/i.test(output) && !/\b(passed|success|ok\b)/i.test(output);
+}
+
+// ── lifecycle ──
+async function nudgeRule5(ctx: any) {
+  if (!brain.brainStrict) return;
+  if (brain.hasWriteEdit && !brain.hasRemember && !brain.rule5Warned && isPlanDone()) {
+    brain.rule5Warned = true;
+    try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
+  }
 }
 
 export function registerHooks(pi: ExtensionAPI) {
@@ -62,8 +84,7 @@ export function registerHooks(pi: ExtensionAPI) {
       const hasActivePlan = !!plan && !isPlanDone();
       if (brain.brainStrict && hasActivePlan && isMutation) {
         const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
-        const isBashLogicalFail = ev.toolName === "bash" && !ev.isError && output.length > 20 && /\b(fail(ed)?|error|exception|ENOENT|not found|cannot|unable)\b/i.test(output) && !/\b(passed|success|ok\b)/i.test(output);
-        const isFailure = ev.isError || isBashLogicalFail;
+        const isFailure = ev.isError || isBashLogicalFail(output, ev.isError, ev.toolName);
         if (isFailure) {
           brain.consecutiveFailures = (brain.consecutiveFailures || 0) + 1;
           if (brain.consecutiveFailures < 2) {
@@ -94,12 +115,10 @@ export function registerHooks(pi: ExtensionAPI) {
       }
       return; // non-brain tools pass through, no brain guards
     }
-    // rm -rf guard first (highest priority) — covers rm -fr / -r -f / --recursive --force
+    // guards: rm -rf (highest priority)
     if (ev?.toolName === "bash") {
       const cmd: string = ev?.input?.command ?? "";
-      const low = cmd.toLowerCase();
-      const isRmRf = /\brm\b/.test(low) && (/\s-[a-z]*r[a-z]*f/.test(low) || (low.includes("--recursive") && low.includes("--force")));
-      if (isRmRf) {
+      if (isRmRfCommand(cmd)) {
         if (!ctx?.hasUI) return { block: true, reason: "Blocked by brain guard: rm -rf needs UI confirm" } as any;
         try {
           const ok = await ctx.ui.confirm("Dangerous", "Allow rm -rf?");
@@ -125,13 +144,7 @@ export function registerHooks(pi: ExtensionAPI) {
     // hasRemember now set in tool_result (post-success) — not here
   });
 
-  // Rule 5: encode-or-it-didn't-happen — once after plan done (not per-turn)
-  pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
-    if (!brain.brainStrict) return;
-    if (brain.hasWriteEdit && !brain.hasRemember && !brain.rule5Warned && isPlanDone()) {
-      brain.rule5Warned = true;
-      try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
-    }
-  });
+  // lifecycle: Rule 5 nudge once after plan done
+  pi.on("turn_end" as any, async (_ev: any, ctx: any) => { await nudgeRule5(ctx); });
   // before_provider_request deleted — merged into context dedup+trim (one prune, not two)
 }

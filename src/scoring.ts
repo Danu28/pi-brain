@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
 import { brain } from "./state";
 import type { BrainEpisode } from "./types";
+// D1 SRP: gist helpers moved to ./gist.ts — scoring owns tokenize/score, gist owns presentation
 
 export function tokenize(s: string): string[] {
   try { return s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); } catch { return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
@@ -52,30 +53,8 @@ export function expandTokens(toks: string[]): string[] {
   return [...out];
 }
 
-// T10 token estimator
-export function estTokens(s: string): number { return Math.ceil(s.length / 3.5); }
-
-// T3 gist helpers
-export function gistForEpisode(e: BrainEpisode): string {
-  const first = e.summary.split(/[.!?\n]/)[0]?.trim() || e.summary;
-  const base = `${e.cue}: ${first}`;
-  const tagPart = e.tags?.length ? ` [${e.tags.join(",")}]` : "";
-  const raw = base + tagPart;
-  return raw.length > 120 ? raw.slice(0,117) + "..." : raw;
-}
-
-export function compressEpisodes(list: BrainEpisode[]): string {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const e of list) {
-    const k = e.cue.toLowerCase().trim();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(`- ${gistForEpisode(e)}`);
-    if (out.length >= 3) break;
-  }
-  return out.join("\n");
-}
+// D1 re-export for backward compat — canonical lives in ./gist.ts (SRP: scoring ≠ presentation)
+export { compressEpisodes, estTokens, gistForEpisode } from "./gist";
 
 // T1 scoring split: base vs ranked
 export function scoreBase(e: BrainEpisode, query: string, filterTags?: string[]): number {
