@@ -36,6 +36,7 @@ export function registerPlan(pi: ExtensionAPI) {
         pl.ts = Date.now();
         brain.cachedLatestPlan = pl;
         brain.needsPlanUpdate = false;
+        if (pl.tasks.every((t) => t.done)) brain.consecutiveFailures = 0;
         await (pi as any).appendEntry?.("brain:plan", pl);
         const text = renderPlan(pl) + `\n(id: ${pl.id})`;
         return { content: [{ type: "text", text: truncate(text) }], details: { plan: pl } };
@@ -66,6 +67,7 @@ export function registerPlan(pi: ExtensionAPI) {
       brain.plans.set(pl.id, pl);
       brain.cachedLatestPlan = pl;
       brain.needsPlanUpdate = false;
+      if (pl.tasks.every((t) => t.done)) brain.consecutiveFailures = 0;
       await (pi as any).appendEntry?.("brain:plan", pl);
       (pi as any).events?.emit?.("brain:plan", pl);
       const text = renderPlan(pl) + `\n(id: ${pl.id})`;
