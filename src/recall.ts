@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { PRUNE_CAP } from "./knobs";
-import { expandTokens, tokenize } from "./scoring";
+import { avgIdf, expandTokens, scoreEpisode, tokenize } from "./scoring";
 import { brain } from "./state";
 import type { BrainEpisode } from "./types";
 
@@ -59,6 +59,18 @@ export function pruneExpired(pi: ExtensionAPI): number {
     brain.recallMemo.clear();
   }
   return n;
+}
+
+// B2 helper: ranked query — single place for avgIdf + scoreEpisode + limit (used by recall + creative)
+export function rankedForQuery(query: string, limit: number, filterTags?: string[]): BrainEpisode[] {
+  const terms = [...new Set(expandTokens(tokenize(query)))];
+  const idf = avgIdf(terms);
+  return candidatePool(query)
+    .map((e) => ({ e, s: scoreEpisode(e, query, filterTags as any) * idf }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
+    .slice(0, limit)
+    .map((x) => x.e);
 }
 
 // Candidate pool for a token query — index hits, else full scan (O(n) fallback)

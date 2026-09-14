@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { candidatePool } from "../recall";
-import { avgIdf, expandTokens, gistForEpisode, scoreEpisode, tokenize } from "../scoring";
+import { rankedForQuery } from "../recall";
+import { gistForEpisode } from "../scoring";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
 import { truncate } from "../util";
@@ -15,14 +15,8 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
   if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
   const pooled: BrainEpisode[] = [];
   for (const q of params.cues) {
-    const terms = [...new Set(expandTokens(tokenize(q)))];
-    const idf = avgIdf(terms);
-    const hits = candidatePool(q)
-      .map((e) => ({ e, s: scoreEpisode(e, q) * idf }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 2)
-      .map((x) => x.e);
+    // B2 delegate to shared rankedForQuery for consistent avgIdf + scoring (DRY)
+    const hits = rankedForQuery(q, 2);
     pooled.push(...hits);
   }
   const unique = [...new Map(pooled.map((e) => [e.id, e])).values()].slice(0, 5);

@@ -67,6 +67,7 @@ export function registerRecall(pi: ExtensionAPI) {
       });
       const idf = avgIdf(terms);
       // A3 DRY: reuse terms for idf + candidatePool, single compute
+      // B3 tag-only: query empty + tags keeps 0-score via TAG_BOOST fallback — see scoring.scoreBase tag-only branch; filter above ensures AND tags
       const scored = candidates
         .map((e) => {
           const raw = Math.max(...queries.map(q => scoreEpisode(e, q, filterTags)));
