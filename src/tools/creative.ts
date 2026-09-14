@@ -25,6 +25,19 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
   }
   const unique = [...new Map(pooled.map((e) => [e.id, e])).values()].slice(0, 5);
   const recentThink = brain.deliberations.slice(-1).map((d: any) => `[think: ${d.goal}] ${d.hypotheses.join("; ")}${d.conclusion ? ` => ${d.conclusion}` : ""}`).join("\n");
+  if (!recentThink) {
+    // strict sequencing: creative-thinking must follow think — surface hint but still allow synthesis from episodes alone
+    const hint = "[hint: creative-thinking is post-think — call think{goal, hypotheses} first so synthesis fuses hypotheses × episodes; proceeding with episodes only]\n";
+    if (!unique.length) return { content: [{ type: "text", text: "No episodes found for cues and no think yet. Call think first, then creative-thinking with 2-3 cues." }], details: { episodes: [] } };
+    // prepend hint to context below by reusing recentThink as hint marker
+    const thinkGoal2 = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
+    const raw2 = params.prompt?.trim();
+    const isLoose2 = !raw2 || raw2.length < 15 || /^creative approach/i.test(raw2);
+    const synthesisPrompt2 = isLoose2 ? (raw2 ? `${raw2} — fuse ${params.cues.join(" + ")}${thinkGoal2 ? ` + think: ${thinkGoal2}` : ""}` : `Create a novel approach combining: ${params.cues.join(" + ")}`) : raw2;
+    const sources2 = unique.length ? `Sources:\n${unique.map((e) => `[${e.cue}] ${gistForEpisode(e)}`).join("\n")}` : "";
+    const text2 = `${hint}${synthesisPrompt2}\n\n${sources2}\n\n→ Call think first, then re-run creative-thinking to fuse hypotheses × episodes into a variant not in either source.`;
+    return { content: [{ type: "text", text: truncate(text2) }], details: { episodes: unique, cues: params.cues, hint: "missing-think" } };
+  }
   if (!unique.length && !recentThink) return { content: [{ type: "text", text: "No episodes found for cues. Use remember first." }], details: { episodes: [] } };
   const thinkGoal = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
   const raw = params.prompt?.trim();
@@ -43,7 +56,7 @@ export function registerCreative(pi: ExtensionAPI) {
   pi.registerTool({
     name: "creative-thinking",
     label: "Creative Thinking",
-    description: "Creative synthesis: fuse distant episodes + latest think into novel approach. Prompt e.g. 'creative-thinking neon + login into glass login' NOT vague 'creative approach' (loose auto-enriched). No vector DB.",
+    description: "Post-think fuse: takes latest think {goal, hypotheses} + cues[2..3] → novel variant not in either source. STRICTLY after think (reads deliberations[-1]; hint if missing). Fuses hypotheses × episode patterns (delegates recall ranking). Prompt e.g. 'neon + login → glass login' NOT 'creative approach' (loose auto-enriched with cues+think goal). No vector DB.",
     parameters: creativeThinkingParams,
     async execute(_id, params, signal) { return creativeThinkingExecute(_id, params, signal); },
   });
