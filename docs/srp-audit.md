@@ -8,6 +8,8 @@
 
 ---
 
+> **See `docs/tool-responsibilities.md` for Current vs Proposed single-verb table per tool (one row per tool, owns/delegates listed).**
+
 ## 1. Responsibility Matrix
 
 | Unit | Declared / Primary Duty | Secondary Duties Found | SRP Verdict |
