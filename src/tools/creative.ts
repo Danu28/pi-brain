@@ -40,7 +40,7 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
     return { content: [{ type: "text", text: truncate(text2) }], details: { episodes: unique, cues: params.cues, hint: "missing-think" } };
   }
   if (!unique.length) {
-    // deliberation-only mode: creative layer on top of think — episodes are optional enhancement
+    // deliberation-only: 1 layer on think — no episodes, force divergent variants + warning
     const thinkGoal = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
     const raw = params.prompt?.trim();
     const isLoose = !raw || raw.length < 15 || /^creative approach/i.test(raw);
@@ -48,8 +48,10 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
       ? (raw ? `${raw} — fuse ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}` : `Create a novel variant from think: ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}`)
       : raw;
     const deliberationBlock = `Deliberation:\n${recentThink}`;
-    const text = `${synthesisPrompt}\n\n${deliberationBlock}\n\n[deliberation-only: no episodes matched cues — synthesizing 1 layer on top of think hypotheses into novel variant]\n\n→ Creative layer: recombine + twist think hypotheses into variant not in deliberation alone (episodes would enhance if present).`;
-    return { content: [{ type: "text", text: truncate(text) }], details: { episodes: [], cues: params.cues, deliberation: recentThink, mode: "deliberation-only" } };
+    const warning = `⚠️ [low-value warning: deliberation-only — no episodes matched cues "${params.cues.join(", ")}" — this is paraphrasing think; real value comes from think × episodes. For CRUD, skip creative-thinking and improve think instead.]`;
+    const variants = `→ Produce 3 forced variants (each must be concrete and NOT verbatim in Deliberation):\n1. [Substitute] Twist one hypothesis by substituting its core material/mechanism — Title | How it works | Why novel vs think\n2. [Combine] Merge two hypotheses into a hybrid with interaction effect — Title | How it works | Why novel vs think\n3. [Invert/Exaggerate] Invert or 10× exaggerate a constraint from think — Title | How it works | Why novel vs think\nConstraint: pick exactly ONE next → plan; if none excite, improve think instead of forcing creativity.`;
+    const text = `${warning}\n\n${synthesisPrompt}\n\n${deliberationBlock}\n\n${variants}`;
+    return { content: [{ type: "text", text: truncate(text) }], details: { episodes: [], cues: params.cues, deliberation: recentThink, mode: "deliberation-only", warning: "low-value" } };
   }
   const thinkGoal = brain.deliberations[brain.deliberations.length-1]?.goal ?? "";
   const raw = params.prompt?.trim();
@@ -57,18 +59,18 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
   const synthesisPrompt = isLoose
     ? (raw ? `${raw} — fuse ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}` : `Create a novel approach combining: ${params.cues.join(" + ")}${thinkGoal ? ` + think: ${thinkGoal}` : ""}`)
     : raw;
-  const sources = unique.length ? `Sources:\n${unique.map((e) => `[${e.cue}] ${gistForEpisode(e)}`).join("\n")}` : "";
-  const deliberationBlock = recentThink ? `Deliberation:\n${recentThink}` : "";
-  const context = [sources, deliberationBlock].filter(Boolean).join("\n\n");
-  const text = `${synthesisPrompt}\n\n${context}\n\n→ Combine insights: fuse episode patterns WITH deliberation hypotheses into variant not in either source.`;
-  return { content: [{ type: "text", text: truncate(text) }], details: { episodes: unique, cues: params.cues, deliberation: recentThink || undefined } };
+  const sources = `Sources:\n${unique.map((e) => `[${e.cue}] ${gistForEpisode(e)}`).join("\n")}`;
+  const deliberationBlock = `Deliberation:\n${recentThink}`;
+  const variants = `→ Produce 3 forced FUSED variants (each NOT in think nor episodes alone):\n1. [Fuse H1 × Episode] Combine strongest think hypothesis with episode pattern — Title | Fusion | Why novel\n2. [Fuse H2 × Episode] Combine second hypothesis with different episode pattern — Title | Fusion | Why novel\n3. [Anti-pattern / Contrarian] Invert the fused consensus to break fixation — Title | Inversion | Why novel\nConstraint: each variant must cite which think hypothesis + which episode it fuses.`;
+  const text = `${synthesisPrompt}\n\n${sources}\n\n${deliberationBlock}\n\n${variants}`;
+  return { content: [{ type: "text", text: truncate(text) }], details: { episodes: unique, cues: params.cues, deliberation: recentThink, mode: "fused" } };
 }
 
 export function registerCreative(pi: ExtensionAPI) {
   pi.registerTool({
     name: "creative-thinking",
     label: "Creative Thinking",
-    description: "Post-think creative layer: 1 layer on top of think — takes latest think {goal, hypotheses} + optional cues[2..3] episodes → novel variant not in think alone. Episodes are optional enhancement (fused if recall hits, otherwise deliberation-only). STRICTLY after think (reads deliberations[-1]; hint if missing). Prompt e.g. 'neon + login → glass login' NOT 'creative approach' (loose auto-enriched with cues+think goal). No vector DB.",
+    description: "Post-think creative layer: 1 layer on top of think — takes latest think {goal, hypotheses} + optional cues[2..3] episodes → 3 forced variants not in think/episodes alone. Episodes are optional enhancement (fused if recall hits, else SCAMPER + low-value warning). STRICTLY after think (reads deliberations[-1]; hint if missing). Variants: 1=Substitute, 2=Combine, 3=Invert/Anti-pattern. Prompt e.g. 'neon + login → glass login' NOT 'creative approach'. No vector DB.",
     parameters: creativeThinkingParams,
     async execute(_id, params, signal) { return creativeThinkingExecute(_id, params, signal); },
   });
