@@ -6,6 +6,16 @@ import { brain, isPlanDone } from "./state";
 import type { BrainEpisode } from "./types";
 import { isNoiseBash, truncate } from "./util";
 
+async function encodeAutoEpisode(pi: ExtensionAPI, cue: string, summary: string, markDirty: boolean) {
+  if (!summary) return;
+  const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
+  await (pi as any).appendEntry?.("brain:episode", ep);
+  brain.episodes.set(ep.id, ep);
+  indexEpisode(ep);
+  brain.recallMemo.clear();
+  if (markDirty) { brain.hasWriteEdit = true; brain.hasRemember = false; }
+}
+
 export function registerHooks(pi: ExtensionAPI) {
   // T09: hippocampal hooks — auto-encode + consolidation (sleep replay) + T2 filter + T11 feedback
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
@@ -13,15 +23,7 @@ export function registerHooks(pi: ExtensionAPI) {
     if (["edit", "write"].includes(ev?.toolName) && !ev?.isError) {
       const cue = `${ev.toolName}:${(ev.input?.path ?? "").toString().slice(0, 30)}`;
       const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
-      if (summary) {
-        const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-        await (pi as any).appendEntry?.("brain:episode", ep);
-        brain.episodes.set(ep.id, ep);
-        indexEpisode(ep);
-        brain.recallMemo.clear();
-        brain.hasWriteEdit = true;
-        brain.hasRemember = false;
-      }
+      await encodeAutoEpisode(pi, cue, summary, true);
     } else if (ev?.toolName === "bash" && !ev?.isError) {
       const cmd: string = (ev.input?.command ?? "").toString();
       const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
@@ -33,32 +35,12 @@ export function registerHooks(pi: ExtensionAPI) {
         const best = [...brain.episodes.values()].filter(e=>e.source==="remember").map(e=>({e,s:scoreBase(e,cmd)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s)[0]?.e;
         if (best) { best.ts = Date.now(); brain.recallMemo.clear(); }
       }
-      if (isPlanDone() && brain.hasRemember) {
-        // still encode but don't mark dirty — but respect noise filter
-        if (isNoise) return;
-        const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = output.slice(0, 200);
-        if (summary) {
-          const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-          await (pi as any).appendEntry?.("brain:episode", ep);
-          brain.episodes.set(ep.id, ep);
-          indexEpisode(ep);
-          brain.recallMemo.clear();
-        }
-      } else {
-        if (isNoise) return;
-        const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = output.slice(0, 200);
-        if (summary) {
-          const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-          await (pi as any).appendEntry?.("brain:episode", ep);
-          brain.episodes.set(ep.id, ep);
-          indexEpisode(ep);
-          brain.recallMemo.clear();
-          brain.hasWriteEdit = true;
-          brain.hasRemember = false;
-        }
-      }
+      // DRY: single encode path — markDirty only if not (planDone && hasRemember)
+      if (isNoise) return;
+      const cue = `bash:${cmd.slice(0,30)}`;
+      const summary = output.slice(0, 200);
+      const markDirty = !(isPlanDone() && brain.hasRemember);
+      await encodeAutoEpisode(pi, cue, summary, markDirty);
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
       // audit preview returns blocked:true but not isError — don't treat as persisted

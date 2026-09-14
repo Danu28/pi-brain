@@ -17,6 +17,8 @@ export function registerHabit(pi: ExtensionAPI) {
       const cwd: string = ctx?.cwd ?? (pi as any).cwd ?? process.cwd();
       const safe = params.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
       if (!safe) return { content: [{ type: "text", text: "Invalid habit name" }], details: { error: "empty name" } } as any;
+      if (!params.steps?.trim()) return { content: [{ type: "text", text: "steps must be non-empty — provide concrete steps" }], details: { error: "empty steps" } } as any;
+      if (!params.when?.trim()) return { content: [{ type: "text", text: "when must be non-empty" }], details: { error: "empty when" } } as any;
       if (ctx?.isProjectTrusted?.() === false) return { content: [{ type: "text", text: "Project not trusted — habit blocked" }], details: { error: "untrusted" } } as any;
       const dir = `${cwd}/.pi/skills/brain-${safe}`;
       const file = `${dir}/SKILL.md`;

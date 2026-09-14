@@ -10,7 +10,7 @@ export function registerRemember(pi: ExtensionAPI) {
   pi.registerTool({
     name: "remember",
     label: "Remember",
-    description: "Explicitly encode an episode to brain memory (hippocampus). Use cue as associative key. Audits before write: exact cue → upsert, similar (score≥3) → preview + needs force:true. Supports tags (≤8 kebab) and refs (≤5 files).",
+    description: "Explicitly encode an episode to brain memory (hippocampus). Use cue as associative key. Audits before write: exact cue → upsert (always, force only bypasses similar audit), similar (score≥5) → preview + needs force:true. Supports tags (≤8 kebab) and refs (≤5 files).",
     parameters: Type.Object({
       cue: Type.String({ description: "Associative cue (short key for recall)" }),
       summary: Type.String({ description: "One-line summary of episode" }),
@@ -25,9 +25,9 @@ export function registerRemember(pi: ExtensionAPI) {
       if (!params.summary?.trim()) return { content: [{ type: "text", text: "summary must be non-empty" }], details: { error: "empty summary" } } as any;
       const tags = normalizeTags(params.tags as any);
       const refs = params.refs?.map((r: string)=>truncate(r)).slice(0,5);
-      // exact cue → upsert (no dup), reuse scoring for similarity check
+      // exact cue → upsert (no dup) — exact always upserts, force only bypasses similar audit
       const exact = [...brain.episodes.values()].find((e) => e.cue.trim().toLowerCase() === cueNorm);
-      if (exact && !params.force) {
+      if (exact) {
         // upsert: update existing instead of creating duplicate
         unindexEpisode(exact);
         exact.summary = truncate(params.summary);

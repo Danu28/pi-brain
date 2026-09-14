@@ -36,11 +36,10 @@ export function registerRecall(pi: ExtensionAPI) {
       const filterTags = normTags;
       const sinceTs = parseSince(params.since as any);
       let candidates: BrainEpisode[] = [...brain.episodes.values()];
-      // batch queries: union tokens and max score across queries (1 call = N recalls)
-      const allQToks = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
-      const qToks = allQToks;
-      if (qToks.length && brain.tokenIndex.size) {
-        const idSets = qToks.map(t => brain.tokenIndex.get(t)).filter(Boolean) as Set<string>[];
+      // batch queries: union tokens and max score across queries (1 call = N recalls) — single terms compute (DRY)
+      const terms = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
+      if (terms.length && brain.tokenIndex.size) {
+        const idSets = terms.map(t => brain.tokenIndex.get(t)).filter(Boolean) as Set<string>[];
         if (idSets.length) {
           const hitIds = new Set<string>();
           for (const s of idSets) for (const id of s) hitIds.add(id);
@@ -66,7 +65,6 @@ export function registerRecall(pi: ExtensionAPI) {
         }
         return true;
       });
-      const terms = [...new Set(queries.flatMap(q => expandTokens(tokenize(q))))];
       const idf = avgIdf(terms);
       const scored = candidates
         .map((e) => {
