@@ -6,6 +6,7 @@ import { pruneExpired, rebuildIndex } from "./recall";
 import { compressEpisodes, scoreEpisode } from "./scoring";
 import { brain, resetBrain } from "./state";
 import { readMode } from "./storage";
+import { syncFooter } from "./ui";
 import type { BrainEpisode, BrainPlan } from "./types";
 import { renderPlan } from "./state";
 
@@ -65,8 +66,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       if (fileMode !== undefined) brain.brainStrict = fileMode;
       else if (lastMode !== undefined) brain.brainStrict = lastMode;
     } catch {}
-    // reflect in footer
-    try { (pi as any)._brainStrict = brain.brainStrict; } catch {}
+    // reflect in footer — creative pulse survives reload
+    syncFooter(pi, ctx, brain.brainStrict);
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
