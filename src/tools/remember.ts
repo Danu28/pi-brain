@@ -25,8 +25,9 @@ export function registerRemember(pi: ExtensionAPI) {
       if (!params.summary?.trim()) return { content: [{ type: "text", text: "summary must be non-empty" }], details: { error: "empty summary" } } as any;
       const tags = normalizeTags(params.tags as any);
       const refs = params.refs?.map((r: string)=>truncate(r)).slice(0,5);
-      // exact cue → upsert (no dup) — exact always upserts, force only bypasses similar audit
-      const exact = [...brain.episodes.values()].find((e) => e.cue.trim().toLowerCase() === cueNorm);
+      // exact cue → upsert O(1) via exactCueIndex (A4 efficiency) — exact always upserts, force only bypasses similar audit
+      const exactId = brain.exactCueIndex.get(cueNorm);
+      const exact = exactId ? brain.episodes.get(exactId) : undefined;
       if (exact) {
         // upsert: update existing instead of creating duplicate
         unindexEpisode(exact);

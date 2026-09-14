@@ -8,6 +8,8 @@ export const brain = {
   episodes: new Map<string, BrainEpisode>(),
   // incremental token → ids index (O(1) recall, rebuilt on session_start)
   tokenIndex: new Map<string, Set<string>>(),
+  // exact cue → id index for O(1) upsert (A4 efficiency bucket)
+  exactCueIndex: new Map<string, string>(),
   // PFC scratchpad — deliberations (not durable, per-turn working memory)
   deliberations: [] as Deliberation[],
   // /pi-brain strict gate — branch-durable, defaults off
@@ -23,8 +25,8 @@ export const brain = {
   cachedLatestPlan: null as BrainPlan | null,
   // plan — ordered tasklist after think
   plans: new Map<string, BrainPlan>(),
-  // T9 recall memo
-  recallMemo: new Map<string, { ts: number; ranked: BrainEpisode[]; text: string }>(),
+  // T9 recall memo — now also caches perQuery for batch efficiency (A1)
+  recallMemo: new Map<string, { ts: number; ranked: BrainEpisode[]; text: string; perQuery?: Record<string, BrainEpisode[]> }>(),
   memoHits: 0,
   memoMisses: 0,
 };
@@ -32,6 +34,7 @@ export const brain = {
 export function resetBrain() {
   brain.episodes.clear();
   brain.tokenIndex.clear();
+  brain.exactCueIndex.clear();
   brain.plans.clear();
   brain.deliberations.length = 0;
   brain.brainStrict = false;

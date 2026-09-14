@@ -31,7 +31,7 @@ export function registerRecall(pi: ExtensionAPI) {
         // true LRU — move to tail
         brain.recallMemo.delete(memoKey); brain.recallMemo.set(memoKey, cached);
         if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
-        return { content: [{ type: "text", text: truncate(cached.text) }], details: { episodes: cached.ranked, cached: true } };
+        return { content: [{ type: "text", text: truncate(cached.text) }], details: { episodes: cached.ranked, perQuery: (cached as any).perQuery, cached: true } };
       }
       const filterTags = normTags;
       const sinceTs = parseSince(params.since as any);
@@ -66,6 +66,7 @@ export function registerRecall(pi: ExtensionAPI) {
         return true;
       });
       const idf = avgIdf(terms);
+      // A3 DRY: reuse terms for idf + candidatePool, single compute
       const scored = candidates
         .map((e) => {
           const raw = Math.max(...queries.map(q => scoreEpisode(e, q, filterTags)));
@@ -78,21 +79,41 @@ export function registerRecall(pi: ExtensionAPI) {
         .map((x) => x.e);
 
       const ranked = scored.length ? scored : candidates.sort((a, b) => b.ts - a.ts).slice(0, limit);
+      // A1 batch per-query details: 1 call = N but exposes per-query top-3 (keeps union max-score for main ranking)
+      const perQuery: Record<string, BrainEpisode[]> = {};
+      if (queries.length > 1) {
+        for (const q of queries) {
+          if (!q.trim()) continue;
+          const qTerms = [...new Set(expandTokens(tokenize(q)))];
+          const qIdf = avgIdf(qTerms);
+          const qScored = candidates
+            .map((e) => {
+              const raw = scoreEpisode(e, q, filterTags);
+              if (raw === 0) return { e, s: 0 };
+              return { e, s: raw * qIdf };
+            })
+            .filter((x) => x.s > 0)
+            .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
+            .slice(0, Math.min(3, limit))
+            .map((x) => x.e);
+          perQuery[q] = qScored.length ? qScored : [];
+        }
+      }
       if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
 
       // T8 smart detail slicing: keep full for explicit recall, but truncate gist for display
       const text = ranked.length
         ? ranked.map((e) => `[${e.cue}]${e.tags?.length ? ` [${e.tags.join(",")}]` : ""} ${e.summary}${e.detail ? " — " + e.detail.slice(0, 120) : ""}${e.refs?.length ? ` refs:${e.refs.join(",")}` : ""}`).join("\n")
         : "No episodes yet. Use remember to encode.";
-      // store memo
+      // store memo (includes perQuery for A1)
       brain.memoMisses++;
-      brain.recallMemo.set(memoKey, { ts: Date.now(), ranked, text });
+      brain.recallMemo.set(memoKey, { ts: Date.now(), ranked, text, perQuery: Object.keys(perQuery).length ? perQuery : undefined } as any);
       // cap memo size
       if (brain.recallMemo.size > 50) {
         const first = brain.recallMemo.keys().next().value;
         if (first) brain.recallMemo.delete(first);
       }
-      return { content: [{ type: "text", text: truncate(text) }], details: { episodes: ranked } };
+      return { content: [{ type: "text", text: truncate(text) }], details: { episodes: ranked, perQuery: Object.keys(perQuery).length ? perQuery : undefined } };
     },
   });
 }

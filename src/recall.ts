@@ -11,6 +11,8 @@ export function indexEpisode(e: BrainEpisode) {
     if (!set) { set = new Set(); brain.tokenIndex.set(tok, set); }
     set.add(e.id);
   }
+  // A4 exact-cue O(1) index
+  brain.exactCueIndex.set(e.cue.trim().toLowerCase(), e.id);
 }
 
 export function unindexEpisode(e: BrainEpisode) {
@@ -19,10 +21,13 @@ export function unindexEpisode(e: BrainEpisode) {
     const set = brain.tokenIndex.get(tok);
     if (set) { set.delete(e.id); if (set.size === 0) brain.tokenIndex.delete(tok); }
   }
+  const cueNorm = e.cue.trim().toLowerCase();
+  if (brain.exactCueIndex.get(cueNorm) === e.id) brain.exactCueIndex.delete(cueNorm);
 }
 
 export function rebuildIndex() {
   brain.tokenIndex.clear();
+  brain.exactCueIndex.clear();
   for (const e of brain.episodes.values()) indexEpisode(e);
 }
 
@@ -37,6 +42,7 @@ export function pruneExpired(pi: ExtensionAPI): number {
       n++;
     }
   }
+  // prune also clears exactCue via unindexEpisode
   if (n) {
     // clear memo on prune
     brain.recallMemo.clear();
