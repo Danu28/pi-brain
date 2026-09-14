@@ -19,6 +19,7 @@ export const brain = {
   rule5Warned: false,
   needsDebugThink: false, // unhappy path: failure → must think before retry
   needsPlanUpdate: false, // after debug think, must update plan before retry
+  consecutiveFailures: 0, // 2-strike rule: only 2 continuous failures trigger unhappy path
   cachedLatestPlan: null as BrainPlan | null,
   // plan — ordered tasklist after think
   plans: new Map<string, BrainPlan>(),
@@ -40,6 +41,7 @@ export function resetBrain() {
   brain.rule5Warned = false;
   brain.needsDebugThink = false;
   brain.needsPlanUpdate = false;
+  brain.consecutiveFailures = 0;
   brain.cachedLatestPlan = null;
   brain.recallMemo.clear();
   brain.memoHits = 0;

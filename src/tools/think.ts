@@ -25,7 +25,7 @@ export function registerThink(pi: ExtensionAPI) {
       await (pi as any).appendEntry?.("brain:deliberation", entry);
       brain.thinkSatisfied = true;
       brain.needsDebugThink = false;
-      if (wasDebug) brain.needsPlanUpdate = true;
+      if (wasDebug) { brain.needsPlanUpdate = true; brain.consecutiveFailures = 0; }
       (pi as any).events?.emit?.("brain:deliberation", entry);
       const text = `Deliberation saved: ${params.goal}\n- ${params.hypotheses.join("\n- ")}${params.conclusion ? `\n=> ${params.conclusion}` : ""}`;
       return { content: [{ type: "text", text: truncate(text) }], details: { deliberation: entry } };

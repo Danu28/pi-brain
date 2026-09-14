@@ -24,6 +24,7 @@ export function registerHooks(pi: ExtensionAPI) {
       const cue = `${ev.toolName}:${(ev.input?.path ?? "").toString().slice(0, 30)}`;
       const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
       await encodeAutoEpisode(pi, cue, summary, true);
+      brain.consecutiveFailures = 0;
     } else if (ev?.toolName === "bash" && !ev?.isError) {
       const cmd: string = (ev.input?.command ?? "").toString();
       const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
@@ -41,6 +42,7 @@ export function registerHooks(pi: ExtensionAPI) {
       const summary = output.slice(0, 200);
       const markDirty = !(isPlanDone() && brain.hasRemember);
       await encodeAutoEpisode(pi, cue, summary, markDirty);
+      brain.consecutiveFailures = 0;
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
       // audit preview returns blocked:true but not isError — don't treat as persisted
@@ -62,13 +64,22 @@ export function registerHooks(pi: ExtensionAPI) {
         const isBashLogicalFail = ev.toolName === "bash" && !ev.isError && output.length > 20 && /\b(fail(ed)?|error|exception|ENOENT|not found|cannot|unable)\b/i.test(output) && !/\b(passed|success|ok\b)/i.test(output);
         const isFailure = ev.isError || isBashLogicalFail;
         if (isFailure) {
+          brain.consecutiveFailures = (brain.consecutiveFailures || 0) + 1;
+          if (brain.consecutiveFailures < 2) {
+            try { (ctx as any)?.ui?.notify?.("First failure (1/2) — next continuous mutation failure will trigger unhappy path. Consider think{goal:'debug ...'} early.", "warning"); } catch {}
+            const hint = "\n[ brain: first failure (1/2) — next continuous write/edit/bash failure will require debug think → plan update before retry ]";
+            const cur = ev.content?.[0]?.text ?? "";
+            return { content: [{ type: "text", text: truncate(cur + hint) }] } as any;
+          }
           brain.needsDebugThink = true;
           brain.needsPlanUpdate = false;
           brain.thinkSatisfied = false;
-          try { (ctx as any)?.ui?.notify?.("Strict unhappy path: failure detected — call think{goal:'debug <Task N: " + (ev.toolName + ":" + (ev.input?.path ?? ev.input?.command ?? "").toString().slice(0,30)) + "', hypotheses:[cause,fix]} before retry.", "warning"); } catch {}
-          const hint = "\n[ brain: failure → rethink — call think{goal:'debug <failed Task N: " + ev.toolName + ">', hypotheses:[root cause, fix]} then plan{id,done} before retry ]";
+          try { (ctx as any)?.ui?.notify?.("Strict unhappy path: 2 continuous failures — call think{goal:'debug <Task N: " + (ev.toolName + ":" + (ev.input?.path ?? ev.input?.command ?? "").toString().slice(0,30)) + "', hypotheses:[cause,fix]} before retry.", "warning"); } catch {}
+          const hint = "\n[ brain: 2 continuous failures → rethink — call think{goal:'debug <failed Task N: " + ev.toolName + ">', hypotheses:[root cause, fix]} then plan{id,done} before retry ]";
           const cur = ev.content?.[0]?.text ?? "";
           return { content: [{ type: "text", text: truncate(cur + hint) }] } as any;
+        } else {
+          // non-failure mutation resets streak (should not happen here, but success path already resets)
         }
       }
     }
