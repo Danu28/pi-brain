@@ -13,6 +13,26 @@ const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy
 export function registerInjection(pi: ExtensionAPI) {
   // strict workflow run lifecycle — reset per prompt (unconditional reset, no timestamp drift)
   pi.on("before_agent_start" as any, async (ev: any, ctx: any) => {
+    // v2 P2: incremental reindex before task start — no restart needed (hadWrite + stale 30s + empty index)
+    const hadWrite = brain.hasWriteEdit;
+    try {
+      if (!brain.codeIndexing) {
+        const last = brain.codeIndexStats.lastIndexedAt ?? 0;
+        const stale = Date.now() - last > 30_000;
+        const needSync = hadWrite || stale || brain.codeBlocks.length === 0;
+        if (needSync) {
+          const cwd = (ctx as any)?.cwd ?? (ev as any)?.cwd ?? process.cwd();
+          if (!brain.codeBlocks.length) {
+            const { buildCodeIndex } = await import("./code.js");
+            await (buildCodeIndex as any)(cwd, (ctx as any)?.signal).catch(()=>{});
+          } else {
+            const { syncCodeIndex } = await import("./code.js");
+            await (syncCodeIndex as any)(cwd, (ctx as any)?.signal).catch(()=>{});
+          }
+          brain.hasWriteEdit = false;
+        }
+      }
+    } catch {}
     brain.thinkSatisfied = false;
     brain.hasWriteEdit = false;
     brain.hasRemember = false;

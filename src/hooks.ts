@@ -155,7 +155,17 @@ export function registerHooks(pi: ExtensionAPI) {
     // hasRemember now set in tool_result (post-success) — not here
   });
 
-  // lifecycle: Rule 5 nudge once after plan done
-  pi.on("turn_end" as any, async (_ev: any, ctx: any) => { await nudgeRule5(ctx); });
+  // lifecycle: Rule 5 nudge once after plan done + task-end reindex (keeps search fresh, no restart)
+  pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
+    await nudgeRule5(ctx);
+    try {
+      if (brain.codeBlocks.length && !brain.codeIndexing && brain.hasWriteEdit) {
+        const cwd = (ctx as any)?.cwd ?? process.cwd();
+        const { syncCodeIndex } = await import("./code.js");
+        await (syncCodeIndex as any)(cwd, (ctx as any)?.signal).catch(()=>{});
+        brain.hasWriteEdit = false;
+      }
+    } catch {}
+  });
   // before_provider_request deleted — merged into context dedup+trim (one prune, not two)
 }

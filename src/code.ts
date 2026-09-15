@@ -113,6 +113,50 @@ export async function buildCodeIndex(cwd: string, signal?: AbortSignal): Promise
   } finally { brain.codeIndexing = false; }
 }
 
+export async function syncCodeIndex(cwd: string, signal?: AbortSignal) {
+  if (brain.codeIndexing) return;
+  brain.codeIndexing = true;
+  try {
+    const allFiles = await walkFiles(cwd);
+    const isIgnored = await loadGitignore(cwd);
+    const files = allFiles.filter(f=>!isIgnored(f)).slice(0,500);
+    const relSet = new Set(files.map(f=>path.relative(cwd,f)));
+    // remove deleted files (handle both full and rel keys legacy)
+    for (const tracked of [...brain.codeFileHashes.keys()]) {
+      const rel = tracked.includes(path.sep) ? path.relative(cwd, tracked) : tracked;
+      const keyRel = relSet.has(tracked) ? tracked : relSet.has(rel) ? rel : null;
+      if (!keyRel) {
+        // check if tracked is full path that maps to rel
+        const asRel = tracked.includes(path.sep) ? path.relative(cwd, tracked) : tracked;
+        if (!relSet.has(asRel) && !relSet.has(tracked)) {
+          brain.codeBlocks = brain.codeBlocks.filter(b=>b.file !== tracked && b.file !== asRel);
+          brain.codeFileHashes.delete(tracked);
+        }
+      }
+    }
+    for (const full of files) {
+      if (signal?.aborted) break;
+      const rel = path.relative(cwd, full);
+      let content: string;
+      try { content = await fs.readFile(full,"utf8"); } catch { continue; }
+      const hash = crypto.createHash("sha1").update(content).digest("hex");
+      const existing = brain.codeFileHashes.get(rel) ?? brain.codeFileHashes.get(full);
+      if (existing === hash) continue;
+      brain.codeBlocks = brain.codeBlocks.filter(b=>b.file !== rel);
+      const chunks = chunkFile(rel, content);
+      for (const b of chunks) {
+        const emb = hashNeuralEmbed(b.content);
+        brain.codeBlocks.push({ ...b, embedding: emb } as CodeBlock);
+      }
+      brain.codeFileHashes.delete(full);
+      brain.codeFileHashes.set(rel, hash);
+    }
+    brain.codeIndexStats.blocks = brain.codeBlocks.length;
+    brain.codeIndexStats.files = brain.codeFileHashes.size;
+    brain.codeIndexStats.lastIndexedAt = Date.now();
+  } finally { brain.codeIndexing = false; }
+}
+
 export async function patchCodeFile(cwd: string, relFile: string) {
   const full = path.join(cwd, relFile);
   let content: string;

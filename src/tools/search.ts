@@ -29,12 +29,25 @@ export function registerSearch(pi: ExtensionAPI) {
         try {
           await buildCodeIndex(process.cwd(), signal as any).catch(() => {});
         } catch {}
+      } else {
+        // within-session freshness: sync before search if dirty/stale (no restart needed)
+        try {
+          if (!brain.codeIndexing) {
+            const last = brain.codeIndexStats.lastIndexedAt ?? 0;
+            const stale = Date.now() - last > 30_000;
+            if (brain.hasWriteEdit || stale) {
+              const { syncCodeIndex } = await import("../code.js");
+              await (syncCodeIndex as any)(process.cwd(), signal as any).catch(() => {});
+              brain.hasWriteEdit = false;
+            }
+          }
+        } catch {}
       }
       if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
 
       // batch: 1 call = N searches
-      const perQuery: Record<string, typeof result.hits> = {} as any;
-      const mergedMap = new Map<string, (typeof result.hits)[number]>();
+      const perQuery: Record<string, ReturnType<typeof searchCode>["hits"]> = {} as any;
+      const mergedMap = new Map<string, ReturnType<typeof searchCode>["hits"][number]>();
       let totalBlocks = 0;
       let model = "hash-neural-384";
       for (const q of cleanQueries) {
