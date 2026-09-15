@@ -26,13 +26,16 @@ export function registerPlan(pi: ExtensionAPI) {
         if (params.done?.length) for (const i of params.done) if (pl.tasks[i]) pl.tasks[i].done = true;
         if (params.tasks?.length) {
           const existing = new Set(pl.tasks.map(t=>t.title.trim().toLowerCase()));
+          const toAdd: string[] = [];
           for (const t of params.tasks) {
             const norm = t.trim().toLowerCase();
-            if (!existing.has(norm)) { pl.tasks.push({ title: truncate(t), done: false }); existing.add(norm); }
+            if (!existing.has(norm)) { toAdd.push(t); existing.add(norm); }
           }
-          // validate after merge — prevents bypassing 3..10 / ≥10 chars via updates
-          const taskErr = planTaskError(pl.tasks.map(t=>t.title));
-          if (taskErr) return { content: [{ type: "text", text: taskErr }], details: { error: "invalid tasks", count: pl.tasks.length } } as any;
+          // validate before mutate — prevents polluting state on invalid tasks
+          const candidate = [...pl.tasks.map(t=>t.title), ...toAdd.map(truncate)];
+          const taskErr = planTaskError(candidate);
+          if (taskErr) return { content: [{ type: "text", text: taskErr }], details: { error: "invalid tasks", count: candidate.length } } as any;
+          for (const t of toAdd) pl.tasks.push({ title: truncate(t), done: false });
         }
         if (params.goal) pl.goal = truncate(params.goal);
         pl.ts = Date.now();

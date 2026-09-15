@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCommand } from "./command";
-import { registerHooks } from "./hooks";
+import { registerHooks } from "./hooks/index.js";
 import { registerInjection } from "./inject";
 import { registerSessionHandlers } from "./session";
 import { registerTools } from "./tools/index";
