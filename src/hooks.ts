@@ -121,7 +121,7 @@ export function registerHooks(pi: ExtensionAPI) {
   pi.on("tool_call" as any, async (ev: any, ctx: any) => {
     if (!brain.brainStrict) {
       // really off — brain tools not discoverable/active (except brain-status + command)
-      if (["remember", "recall", "think", "creative-thinking", "plan", "habit"].includes(ev.toolName)) {
+      if (["remember", "recall", "think", "creative", "plan", "habit"].includes(ev.toolName)) {
         return { block: true, reason: "pi-brain is OFF — run /pi-brain on to enable. No injection, footer, or auto-encode active." } as any;
       }
       return; // non-brain tools pass through, no brain guards

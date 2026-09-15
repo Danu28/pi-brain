@@ -51,7 +51,7 @@ Pre-publish sanity checklist:
 
 ## Conventions
 
-- Tool/command names: kebab-case (`brain-status`, `creative-thinking`, `/pi-brain`).
+- Tool/command names: kebab-case (`brain-status`, `creative`, `/pi-brain`).
 - Entry types: `:`-scoped (`brain:episode`, `brain:plan`, `brain:mode`, `brain:deliberation`).
 - Constants: UPPER_SNAKE in `knobs.ts`; functions camelCase; types `Brain*` prefixed.
 - Behavior-parity porting: every refactor keeps the exact scoring/guard logic — tests in `tests/` pin it.

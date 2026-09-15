@@ -78,7 +78,7 @@ describe("tools: think / creative / plan", () => {
 
   it("creative post-think fuse and hint when no think", async () => {
     const { pi, tools } = mockPi(); registerRemember(pi); registerThink(pi); registerCreative(pi);
-    const rem = tools["remember"]; const think = tools["think"]; const creative = tools["creative-thinking"];
+    const rem = tools["remember"]; const think = tools["think"]; const creative = tools["creative"];
     // no think yet -> hint
     await rem.execute("1", { cue:"neon", summary:"neon glow" }, null as any);
     let r = await creative.execute("1", { cues:["neon","login"] }, null as any);

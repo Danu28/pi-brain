@@ -1,7 +1,7 @@
 {
   "name": "@danu28/pi-brain",
   "version": "2.0.0",
-  "description": "Hippocampus + PFC memory for pi — remember / recall / think / creative-thinking / plan / habit / brain-status",
+  "description": "Hippocampus + PFC memory for pi — remember / recall / think / creative / plan / habit / brain-status",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -42,7 +42,7 @@ No blocking API break — all fixes keep `pi.registerTool` params stable.
 | T1 | `hypotheses[1..3]` only schema `minItems:1`, no length check | `think{goal:"x", hypotheses:["a"]}` passes but `plan{hypotheses:["a"]}` requires `≥10 chars` + `≥2`. **Mismatch** — strict workflow says “think 2-3 detailed”. Fix: align think to also require `≥10 chars` or document difference (think is scratchpad, plan is gate). |
 | T2 | No `thinkSatisfied` reset on `session_start`? Actually `before_agent_start` resets, ok | — |
 
-### 4. creative-thinking `src/tools/creative.ts` — **Critical**
+### 4. creative `src/tools/creative.ts` — **Critical**
 
 | # | Current | Bug |
 |---|---|---|

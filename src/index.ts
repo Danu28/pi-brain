@@ -12,7 +12,7 @@ import { registerTools } from "./tools/index";
 
 export default function (pi: ExtensionAPI) {
   registerSessionHandlers(pi); // TUI renderers + session_start waking + compaction + shutdown
-  registerTools(pi);           // remember / recall / think / creative-thinking / plan / habit / brain-status
+  registerTools(pi);           // remember / recall / think / creative / plan / habit / brain-status
   registerCommand(pi);         // /pi-brain on|off|status
   registerInjection(pi);       // before_agent_start (strict/default inject) + context dedup
   registerHooks(pi);           // tool_result auto-encode + tool_call guards + turn_end nudge

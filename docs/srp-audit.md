@@ -17,7 +17,7 @@
 | **remember** `src/tools/remember.ts` | Encode episode by cue (`cue → summary/detail/tags/refs`) | Similarity audit (TF-IDF + IDF), exact-cue upsert, tag/refs normalization, truncation, indexing, memo clear | ⚠️ **Mild violation** — audit logic + IDF calc duplicated in `recall` |
 | **recall** `src/tools/recall.ts` | Ranked associative recall (TF-IDF + decay + tag boost) | Candidate pool building, filter (tags/source/since/expires), IDF weighting, memo LRU, gist formatting, fallback recency | ⚠️ **Medium** — too many stages in one `execute`; IDF duplicated |
 | **think** `src/tools/think.ts` | PFC scratchpad `goal + hypotheses` → working memory | Strict unhappy-path guard (`needsDebugThink`), debug-goal prefix check, entry append | ✅ **Good** — guard is single rule, still one reason (deliberation) |
-| **creative-thinking** `src/tools/creative.ts` | **Post-think fuse** — takes latest `think {goal, hypotheses}` + `cues[2..3]` episodes → novel variant not in either source (strictly *after* `think`; reads `deliberations[-1]`, hints if missing) | CandidatePool + scoring (reimplements recall), prompt auto-enrichment, gist | ⚠️ **Overlap** — reimplements `recall` scoring; should delegate to `rankedForQuery` + `gist.ts` (fuse = hypotheses × episodes) |
+| **creative** `src/tools/creative.ts` | **Post-think fuse** — takes latest `think {goal, hypotheses}` + `cues[2..3]` episodes → novel variant not in either source (strictly *after* `think`; reads `deliberations[-1]`, hints if missing) | CandidatePool + scoring (reimplements recall), prompt auto-enrichment, gist | ⚠️ **Overlap** — reimplements `recall` scoring; should delegate to `rankedForQuery` + `gist.ts` (fuse = hypotheses × episodes) |
 | **plan** `src/tools/plan.ts` | Ordered tasklist `goal + tasks[3..10]` with `id+done` updates | **Also creates deliberation** when `hypotheses` present (does `think`'s job), task validation (`planTaskError`), truncation, cache update | 🔴 **Violation** — two reasons to change: planning vs deliberation. Single-shot `hypotheses` belongs to `think`. |
 | **habit** `src/tools/habit.ts` | Scaffold `.pi/skills/brain-<name>/SKILL.md` | Name sanitization, trust check, preview-vs-write, `withFileMutationQueue` branching, variant merge | ✅ **Acceptable** — all support the single scaffolding duty |
 | **brain-status** `src/tools/brain-status.ts` | Metacognition: count + budget + knobs | Overload emit, index stats, gist preview, token est. | ✅ **Acceptable** — one reason: status |
@@ -39,7 +39,7 @@
 ## 2. Overlapping Duties (tool-to-tool)
 
 1. **plan ↔ think overlap** — `plan{hypotheses}` creates a `Deliberation` identical to `think`. Two entry points for same duty → callers can't know canonical path. Tests expect both. **Fix:** keep `plan.hypotheses` as syntactic sugar but delegate immediately to a shared `createDeliberation()` helper owned by `think` module, or deprecate and document `think` as sole deliberation writer.
-2. **creative-thinking ↔ recall overlap** — `creative` loops `candidatePool(q)` + `scoreEpisode` per cue, same core as `recall`, then dedups. Uses 0.6× `AUTO_BOOST` indirectly via scoring. **Fix:** delegate candidate scoring to a shared `rankedForQuery(query, limit)` helper instead of reimplementing loop.
+2. **creative ↔ recall overlap** — `creative` loops `candidatePool(q)` + `scoreEpisode` per cue, same core as `recall`, then dedups. Uses 0.6× `AUTO_BOOST` indirectly via scoring. **Fix:** delegate candidate scoring to a shared `rankedForQuery(query, limit)` helper instead of reimplementing loop.
 3. **remember ↔ recall IDF duplication** — both compute `avgIdf = Σ log((N+1)/(df+1))+1 / terms.length` inline (3 copies if counting `creative`'s indirect). **Fix:** extract `avgIdf(terms)` / `scoreWithIdf()` in `scoring.ts` and reuse. (Done in this audit: added `avgIdf` helper.)
 4. **hooks auto-encode vs storage** — `hooks.ts` knows `AUTO_TTL_MS`, `truncate`, `indexEpisode`, `isNoiseBash`, `scoreBase` — mixes persistence, indexing, filtering, feedback. **Fix:** split into `hooks/auto-encode.ts` (encode), `hooks/guards.ts` (rm-rf + strict blocks), `hooks/lifecycle.ts` (turn_end). Keep `hooks.ts` as barrel re-export so `src/index.ts` unchanged.
 5. **scoring knows presentation** — `gistForEpisode`/`compressEpisodes` are view concerns used only by `inject`/`session`/`creative`/`brain-status`. **Fix:** move to `src/gist.ts`.
@@ -84,7 +84,7 @@ All pass after `avgIdf`/`validation` extraction. `dist/` unchanged externally.
 
 - [ ] PR2: move `gistForEpisode`/`compressEpisodes` → `src/gist.ts`, update imports in `inject`/`session`/`creative`/`brain-status`.
 - [ ] PR3: split `hooks.ts` into three focused files (as above), keep barrel.
-- [ ] PR4: extract `candidatePool` + `rankedForQuery` helper to remove `creative-thinking` scoring loop duplication.
+- [ ] PR4: extract `candidatePool` + `rankedForQuery` helper to remove `creative` scoring loop duplication.
 - [ ] PR5: deprecate `plan.hypotheses` sugar — document `think` as sole deliberation writer, keep delegate for compat.
 
-> Rule of thumb applied: **One tool, one verb.** `remember` encodes, `recall` retrieves, `think` deliberates, `creative-thinking` fuses, `plan` sequences, `habit` scaffolds, `brain-status` reports. Everything else is a helper, not a second verb.
+> Rule of thumb applied: **One tool, one verb.** `remember` encodes, `recall` retrieves, `think` deliberates, `creative` fuses, `plan` sequences, `habit` scaffolds, `brain-status` reports. Everything else is a helper, not a second verb.
