@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { searchCode } from "../code";
 import { createDeliberation } from "../deliberation";
+import { rankedForQuery } from "../recall";
 import { brain } from "../state";
 import { truncate } from "../util";
 
@@ -27,7 +29,19 @@ export function registerThink(pi: ExtensionAPI) {
       brain.needsDebugThink = false;
       if (wasDebug) { brain.needsPlanUpdate = true; brain.consecutiveFailures = 0; }
       const hint = shortHyps.length ? `\n[hint: hypothesis "${shortHyps[0].slice(0,30)}" <10 chars — make it detailed (≥10) for better recall; plan will require 2-3 ≥10]` : "";
-      const text = `Deliberation saved: ${params.goal}\n- ${params.hypotheses.join("\n- ")}${params.conclusion ? `\n=> ${params.conclusion}` : ""}${hint}`;
+      // v2 P3 — retrieval-augmented: top3 episodes + top2 code for grounding
+      let retrieval = "";
+      try {
+        const q = `${params.goal} ${params.hypotheses.join(" ")}`;
+        const eps = rankedForQuery(q, 3);
+        const code = brain.codeBlocks.length ? searchCode(q, 2).hits : [];
+        if (eps.length || code.length) {
+          const epLines = eps.length ? `Episodes:\n${eps.map(e=>`[${e.cue}] ${e.summary.slice(0,80)}`).join("\n")}` : "";
+          const codeLines = code.length ? `Code:\n${code.map(h=>`${h.file}:${h.startLine} ${h.score.toFixed(2)} "${h.preview.slice(0,60)}"`).join("\n")}` : "";
+          retrieval = `\n\n[retrieved ${eps.length} episodes + ${code.length} code — grounded]\n` + [epLines, codeLines].filter(Boolean).join("\n");
+        }
+      } catch {}
+      const text = `Deliberation saved: ${params.goal}\n- ${params.hypotheses.join("\n- ")}${params.conclusion ? `\n=> ${params.conclusion}` : ""}${hint}${retrieval}`;
       return { content: [{ type: "text", text: truncate(text) }], details: { deliberation: entry, hint: shortHyps.length ? "short-hypothesis" : undefined } };
     },
   });

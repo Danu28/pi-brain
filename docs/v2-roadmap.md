@@ -29,12 +29,13 @@ Rollback: `BLEND_SEMANTIC=0` → v1 lexical instantly.
 - [x] `src/tools/brain-status.ts` shows `Code: 0 blocks 0 files synced never` → after index `Code: 210 blocks 42 files synced 0m ago`, neural still `hash-neural-384 384d`
 - [x] `npm run typecheck` pass, `npm test` 21 passed, `npm run build` 66KB (was 42KB)
 
-## P3 — Think/Plan/Habit augment (1 day)
-- [ ] `think` retrieval-augmented (top3 episodes + top2 code via `hashNeuralEmbed(goal)`)
-- [ ] `creative-thinking` latent far-neighbor `0.4-0.6`
-- [ ] `plan` draft from centroid `cosine>0.78`
-- [ ] `habit` cluster (brute k-means, no lib) → proposal
-- [ ] `docs/architecture.html` updated, `CHANGELOG` → 2.0.0, tag + publish
+## P3 — Think/Plan/Habit augment (1 day) — ✅ DONE on v2
+- [x] `src/tools/think.ts` retrieval-augmented: after `createDeliberation`, `rankedForQuery(goal+hypotheses,3)` + `searchCode(q,2)` → appends `[retrieved 3 episodes + 2 code]` to return text
+- [x] `src/tools/creative.ts` latent far-neighbor 0.4-0.6: pools top5 per cue, computes `qEmb=hashNeuralEmbed(cues)`, picks `cosine 0.4-0.6` far-neighbor for novel fusion, fallback to farthest
+- [x] `src/tools/plan.ts` draft from centroid `cosine>0.78`: if goal-only, `hashNeuralEmbed(goal)` vs past plans → returns `Draft from centroid [id] cosine 0.81` + suggested tasks
+- [x] `src/tools/brain-status.ts` habit cluster (brute pairwise `cosine>0.82` no lib, <5ms) → `Habit suggestion: cluster "x" x5` or hint, exposed in `txt` + `details.habitHint`
+- [x] `npm run typecheck` pass, `npm test` 21 passed, `npm run build` pending 2.0.0 tag
+- [ ] `docs/architecture.html` update + `CHANGELOG 2.0.0` + tag + publish (next)
 
 ## Branching
 - `master` stays 1.0.0 (publishable).
