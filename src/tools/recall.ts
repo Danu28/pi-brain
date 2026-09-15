@@ -1,7 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { RECALL_MEMO_MS } from "../knobs";
-import { avgIdf, expandTokens, normalizeTags, parseSince, scoreEpisode, tokenize } from "../scoring";
+import { BLEND_SEMANTIC, RECALL_MEMO_MS } from "../knobs";
+import { hashNeuralEmbed } from "../neural";
+import { searchCode } from "../code";
+import { avgIdf, expandTokens, hybridScore, normalizeTags, parseSince, scoreEpisode, tokenize } from "../scoring";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
 import { truncate } from "../util";
@@ -18,20 +20,25 @@ export function registerRecall(pi: ExtensionAPI) {
       tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (AND)", maxItems: 8 })),
       source: Type.Optional(Type.String({ description: "Filter by source: remember|auto" })),
       since: Type.Optional(Type.String({ description: "Filter since: 7d|24h|ISO|ms" })),
+      includeCode: Type.Optional(Type.Union([Type.String({ description: "Include code hits: auto|true|false (auto detects where/how/find)" }), Type.Boolean()])),
+      filterPath: Type.Optional(Type.String({ description: "Code filterPath substring, e.g. src/payments" })),
     }),
     async execute(_id, params, signal) {
       const limit = params.limit ?? 5;
       const queries: string[] = params.queries?.length ? params.queries : [params.query ?? ""];
       // T9 memo key (normalize tags for stable key)
       const normTags = normalizeTags(params.tags as any);
-      const memoKey = `${queries.join("\x00")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`; // \x00 avoids a+b collision
+      const includeCodeRaw: any = (params as any).includeCode;
+      const filterPath = (params as any).filterPath as string | undefined;
+      // memo includes code params
+      const memoKey = `${queries.join("\x00")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}|${String(includeCodeRaw??"auto")}|${filterPath??""}`; // \x00 avoids a+b collision
       const cached = brain.recallMemo.get(memoKey);
       if (cached && Date.now() - cached.ts < RECALL_MEMO_MS) {
         brain.memoHits++;
         // true LRU — move to tail
         brain.recallMemo.delete(memoKey); brain.recallMemo.set(memoKey, cached);
         if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
-        return { content: [{ type: "text", text: truncate(cached.text) }], details: { episodes: cached.ranked, perQuery: (cached as any).perQuery, cached: true } };
+        return { content: [{ type: "text", text: truncate(cached.text) }], details: { episodes: cached.ranked, perQuery: (cached as any).perQuery, codeHits: (cached as any).codeHits, cached: true } as any };
       }
       const filterTags = normTags;
       const sinceTs = parseSince(params.since as any);
@@ -66,13 +73,28 @@ export function registerRecall(pi: ExtensionAPI) {
         return true;
       });
       const idf = avgIdf(terms);
-      // A3 DRY: reuse terms for idf + candidatePool, single compute
-      // B3 tag-only: query empty + tags keeps 0-score via TAG_BOOST fallback — see scoring.scoreBase tag-only branch; filter above ensures AND tags
+      // v2 hybrid: precompute qEmb per query + maxLex per query for normLex (BLEND_SEMANTIC=0 → pure lexical v1)
+      const qEmbs: (Float32Array | null)[] = queries.map(q => {
+        if (!q.trim() || BLEND_SEMANTIC === 0) return null;
+        try { return hashNeuralEmbed(q); } catch { return null; }
+      });
+      const perQueryMaxLex: number[] = queries.map((q, qi) => {
+        if (!q.trim()) return 1;
+        const qIdf = avgIdf([...new Set(expandTokens(tokenize(q)))]);
+        const lex = candidates.map(e => scoreEpisode(e, q, filterTags) * qIdf);
+        return Math.max(1, ...lex);
+      });
+      const maxLex = Math.max(1, ...perQueryMaxLex);
+      // A3 DRY + B3 tag-only preserved
       const scored = candidates
         .map((e) => {
-          const raw = Math.max(...queries.map(q => scoreEpisode(e, q, filterTags)));
+          const scores = queries.map((q, qi) => {
+            const qIdf = qi < perQueryMaxLex.length ? avgIdf([...new Set(expandTokens(tokenize(q)))]) : idf;
+            return hybridScore(e, q, filterTags, qEmbs[qi] as any, perQueryMaxLex[qi] ?? maxLex, qIdf);
+          });
+          const raw = Math.max(...scores);
           if (raw === 0) return { e, s: 0 };
-          return { e, s: raw * idf };
+          return { e, s: raw };
         })
         .filter((x) => x.s > 0 || queries.every(q => q.trim() === "") || (filterTags?.length ? true : false))
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
@@ -80,6 +102,28 @@ export function registerRecall(pi: ExtensionAPI) {
         .map((x) => x.e);
 
       const ranked = scored.length ? scored : candidates.sort((a, b) => b.ts - a.ts).slice(0, limit);
+      // v2 P2 — code hits (dual corpus) — includeCode auto detects code intent
+      let codeHits: any[] = [];
+      let codeModel = "hash-neural-384";
+      let totalBlocks = brain.codeBlocks.length;
+      const shouldIncludeCode = (()=>{
+        if (includeCodeRaw === false || includeCodeRaw === "false") return false;
+        if (includeCodeRaw === true || includeCodeRaw === "true") return true;
+        const q = queries.join(" ").toLowerCase();
+        return /(where|how|find|locate|show|search|handle|src\/|\.ts|\.js|payment|auth|retry|code|file)/.test(q);
+      })();
+      if (shouldIncludeCode) {
+        const q = queries.find(q=>q.trim()) ?? "";
+        if (q) {
+          if (!brain.codeBlocks.length && !brain.codeIndexing) {
+            try { const { buildCodeIndex } = await import("../code.js"); await (buildCodeIndex as any)(process.cwd(), signal as any).catch(()=>{}); } catch {}
+          }
+          const res = searchCode(q, Math.min(3, limit), filterPath);
+          codeHits = res.hits;
+          codeModel = res.model;
+          totalBlocks = res.totalBlocks;
+        }
+      }
       // A1 batch per-query details: 1 call = N but exposes per-query top-3 (keeps union max-score for main ranking)
       const perQuery: Record<string, BrainEpisode[]> = {};
       if (queries.length > 1) {
@@ -87,11 +131,14 @@ export function registerRecall(pi: ExtensionAPI) {
           if (!q.trim()) continue;
           const qTerms = [...new Set(expandTokens(tokenize(q)))];
           const qIdf = avgIdf(qTerms);
+          let qEmbPer: Float32Array | null = null;
+          if (BLEND_SEMANTIC > 0 && q.trim()) try { qEmbPer = hashNeuralEmbed(q); } catch { qEmbPer = null; }
+          const qMaxLex = Math.max(1, ...candidates.map(e => scoreEpisode(e, q, filterTags) * qIdf));
           const qScored = candidates
             .map((e) => {
-              const raw = scoreEpisode(e, q, filterTags);
-              if (raw === 0) return { e, s: 0 };
-              return { e, s: raw * qIdf };
+              const s = hybridScore(e, q, filterTags, qEmbPer as any, qMaxLex, qIdf);
+              if (s === 0) return { e, s: 0 };
+              return { e, s };
             })
             .filter((x) => x.s > 0)
             .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
@@ -103,18 +150,24 @@ export function registerRecall(pi: ExtensionAPI) {
       if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
 
       // T8 smart detail slicing: keep full for explicit recall, but truncate gist for display
-      const text = ranked.length
+      let text = ranked.length
         ? ranked.map((e) => `[${e.cue}]${e.tags?.length ? ` [${e.tags.join(",")}]` : ""} ${e.summary}${e.detail ? " — " + e.detail.slice(0, 120) : ""}${e.refs?.length ? ` refs:${e.refs.join(",")}` : ""}`).join("\n")
         : "No episodes yet. Use remember to encode.";
+      if (codeHits.length) {
+        const codeLines = codeHits.map((h:any,i:number)=>`${i+1}. ${h.file}:${h.startLine} ${h.score.toFixed(3)} "${h.preview.slice(0,80)}"`).join("\n");
+        text += `\n\n--- code (${codeHits.length}/${totalBlocks} blocks, ${codeModel}) ---\n` + codeLines;
+      } else if (shouldIncludeCode && totalBlocks===0) {
+        text += "\n\n[code index empty — run in repo with files, code will auto-index next recall]";
+      }
       // store memo (includes perQuery for A1)
       brain.memoMisses++;
-      brain.recallMemo.set(memoKey, { ts: Date.now(), ranked, text, perQuery: Object.keys(perQuery).length ? perQuery : undefined } as any);
+      brain.recallMemo.set(memoKey, { ts: Date.now(), ranked, text, perQuery: Object.keys(perQuery).length ? perQuery : undefined, codeHits } as any);
       // cap memo size
       if (brain.recallMemo.size > 50) {
         const first = brain.recallMemo.keys().next().value;
         if (first) brain.recallMemo.delete(first);
       }
-      return { content: [{ type: "text", text: truncate(text) }], details: { episodes: ranked, perQuery: Object.keys(perQuery).length ? perQuery : undefined } };
+      return { content: [{ type: "text", text: truncate(text) }], details: { episodes: ranked, perQuery: Object.keys(perQuery).length ? perQuery : undefined, codeHits, codeModel, totalBlocks } as any };
     },
   });
 }

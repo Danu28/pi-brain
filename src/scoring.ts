@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { AUTO_BOOST, BLEND_LEXICAL, BLEND_SEMANTIC, BLEND_TAG, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { cosine, fromBase64, hashNeuralEmbed } from "./neural";
 import { brain } from "./state";
 import type { BrainEpisode } from "./types";
 // D1 SRP: gist helpers moved to ./gist.ts — scoring owns tokenize/score, gist owns presentation
@@ -116,3 +117,46 @@ export function avgIdf(terms: string[]): number {
 
 // re-export for backward compat — single source lives in validation.ts (SRP: scoring ≠ validation)
 export { planTaskError } from "./validation";
+
+// ── v2 hybrid neural scorer ─────────────────────────────────────────────
+// final = (BLEND_LEXICAL*normLex + BLEND_SEMANTIC*cosine + BLEND_TAG*tagNorm) * decay * sourceBoost
+// normLex = lex / maxLex (0-1 per query), cosine = max(0, dot(qEmb, docEmb)), tagNorm = 0/1 via TAG_BOOST normalization
+// If BLEND_SEMANTIC=0 or doc has no embedding → pure lexical (v1 exact).
+export function getEpisodeEmbedding(e: BrainEpisode): Float32Array | null {
+  // runtime cache first
+  const cached = brain.embeddings.get(e.id);
+  if (cached) return cached;
+  if (e.embedding) {
+    try { const v = fromBase64(e.embedding); brain.embeddings.set(e.id, v); return v; } catch { return null; }
+  }
+  return null;
+}
+
+export function episodeTextForEmbedding(e: BrainEpisode): string {
+  return [e.cue, e.summary, e.detail ?? "", ...(e.tags ?? [])].join(" ").slice(0, 800);
+}
+
+export function hybridScore(e: BrainEpisode, query: string, filterTags: string[] | undefined, qEmb: Float32Array | null, maxLex: number, idf: number): number {
+  const lexRaw = scoreEpisode(e, query, filterTags) * idf;
+  const normLex = maxLex > 0 ? Math.min(1, lexRaw / maxLex) : 0;
+  // semantic part — 0 if no embedding or BLEND_SEMANTIC=0
+  let sem = 0;
+  if (BLEND_SEMANTIC > 0 && qEmb) {
+    const docEmb = getEpisodeEmbedding(e);
+    if (docEmb) sem = Math.max(0, cosine(qEmb, docEmb));
+  }
+  // tagNorm is implicit in lex via TAG_BOOST, but we expose BLEND_TAG as extra if filterTags matched
+  // Hybrid: when no semantic, behave like v1 (lexRaw)
+  if (BLEND_SEMANTIC === 0 || !qEmb || sem === 0) {
+    // keep v1 path exact — no normalization dilution when semantic disabled
+    return lexRaw;
+  }
+  const hybrid = BLEND_LEXICAL * normLex + BLEND_SEMANTIC * sem + BLEND_TAG * (normLex > 0 && sem > 0 ? 0 : 0);
+  // scale hybrid back to lex magnitude domain then apply decay/source via scoreEpisode's decay? Instead recompute decay/source:
+  // We already have lexRaw = base*decay*source*idf, so hybrid is normalized. Multiply by maxLex to restore magnitude then keep decay/source proportional.
+  // Simpler: hybrid * maxLex preserves v1 magnitude for ranking.
+  const scaled = hybrid * maxLex;
+  // Ensure we don't zero out valid semantic-only hits (normLex=0 but sem>0.6) — allow sem to surface open-vocab
+  if (normLex === 0 && sem > 0.55) return sem * maxLex * 0.8;
+  return scaled;
+}

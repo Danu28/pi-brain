@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { hashNeuralEmbed, cosine } from "../neural";
 import { createDeliberation } from "../deliberation";
 import { planTaskError } from "../validation";
 import { brain, renderPlan } from "../state";
@@ -50,6 +51,20 @@ export function registerPlan(pi: ExtensionAPI) {
         brain.thinkSatisfied = true;
         brain.needsDebugThink = false;
         if (entry.goal.toLowerCase().trim().startsWith("debug")) brain.needsPlanUpdate = true;
+      }
+      // v2 P3 — draft from centroid: if goal only, suggest tasks from most similar past plan (cosine>0.78)
+      if (params.goal && (!params.tasks || !params.tasks.length) && !params.id) {
+        try {
+          const qEmb = hashNeuralEmbed(params.goal);
+          let best: { plan: BrainPlan; score: number } | null = null;
+          for (const p of brain.plans.values()) {
+            try { const pEmb = hashNeuralEmbed(p.goal); const s = cosine(qEmb, pEmb); if (!best || s > best.score) best = { plan: p, score: s }; } catch {}
+          }
+          if (best && best.score > 0.78) {
+            const draft = best.plan.tasks.map(t=>t.title);
+            return { content: [{ type: "text", text: `Draft from centroid [${best.plan.id}] cosine ${best.score.toFixed(2)} — ${best.plan.goal}\nSuggested tasks (edit then call plan again with tasks):\n${draft.map((t,i)=>`${i+1}. ${t}`).join("\n")}\n\n→ Call plan {goal:"${params.goal}", tasks:[...draft] } to create` }], details: { draftFrom: best.plan.id, score: best.score, suggestedTasks: draft, centroid: best.plan } as any };
+          }
+        } catch {}
       }
       // create new plan — collision-free id, no goal slop — enforce detailed 3-10 split
       if (!params.goal || !params.tasks?.length) return { content: [{ type: "text", text: "plan: goal and tasks required for new plan (use id+done to update)" }], details: { error: "missing goal/tasks" } } as any;

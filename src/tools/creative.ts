@@ -1,7 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { gistForEpisode } from "../gist";
+import { hashNeuralEmbed, cosine } from "../neural";
 import { rankedForQuery } from "../recall";
+import { getEpisodeEmbedding } from "../scoring";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
 import { truncate } from "../util";
@@ -15,11 +17,23 @@ async function creativeThinkingExecute(_id: any, params: any, signal: any) {
   if (signal?.aborted) return { content: [{ type: "text", text: "aborted" }], details: {} } as any;
   const pooled: BrainEpisode[] = [];
   for (const q of params.cues) {
-    // B2 delegate to shared rankedForQuery for consistent avgIdf + scoring (DRY)
-    const hits = rankedForQuery(q, 2);
+    const hits = rankedForQuery(q, 5);
     pooled.push(...hits);
   }
-  const unique = [...new Map(pooled.map((e) => [e.id, e])).values()].slice(0, 5);
+  // v2 P3 — far-neighbor 0.4-0.6: pick episodes not nearest nor random, for novel fusion
+  let unique = [...new Map(pooled.map((e) => [e.id, e])).values()];
+  try {
+    const qEmb = hashNeuralEmbed(params.cues.join(" "));
+    const scored = unique.map(e=>{ const emb = getEpisodeEmbedding(e); const s = emb ? cosine(qEmb, emb) : 0; return {e,s};});
+    const far = scored.filter(x=>x.s>=0.4 && x.s<=0.6).sort((a,b)=>b.s-a.s).map(x=>x.e);
+    if (far.length >= 2) unique = far.slice(0,5);
+    else if (!unique.length && scored.length) {
+      // fallback to farthest among scored if no hit in window but scored exists — still divergent
+      const sorted = scored.sort((a,b)=>a.s-b.s);
+      unique = sorted.slice(0,3).map(x=>x.e);
+    }
+  } catch {}
+  unique = unique.slice(0,5);
   const recentThink = brain.deliberations.slice(-1).map((d: any) => `[think: ${d.goal}] ${d.hypotheses.join("; ")}${d.conclusion ? ` => ${d.conclusion}` : ""}`).join("\n");
   if (!recentThink) {
     // strict sequencing: creative-thinking must follow think — surface hint but still allow synthesis from episodes alone
