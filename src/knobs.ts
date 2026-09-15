@@ -16,3 +16,14 @@ export const BUDGET_WARN_PCT = 75;
 export const BUDGET_STOP_PCT = 85;
 export const PRUNE_WARN = 35;
 export const PRUNE_CAP = 40;
+
+// v2 — hash-neural-384 hybrid (pure JS, 0 deps, CPU <1ms, 100% private)
+// Set BLEND_SEMANTIC=0 to instantly revert to v1 lexical (no rebuild).
+export const NEURAL_DIM = 384;
+export const BLEND_LEXICAL = 0.55;
+export const BLEND_SEMANTIC = 0.35;
+export const BLEND_TAG = 0.10;
+export const SIMILAR_COSINE = 0.82;
+export const AUTO_TAG_COSINE = 0.75;
+export const CODE_TOPK = 3;
+export const NEURAL_SEED = 42;

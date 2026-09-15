@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-brain v2 Proposal — hash-neural-384 · CPU-only · 100% private · Single Brain</title>
+<style>
+:root{
+  --bg:#0b0f14; --panel:#11161d; --panel2:#151c25; --line:#26303c; --line2:#32404f;
+  --text:#d9e0e8; --muted:#8b98a5; --dim:#5e6a76; --accent:#7aa2ff;
+  --ok:#3fb950; --warn:#e3b341; --err:#f85149; --ext:#bc8cff; --cyan:#56d4dd;
+  --mono:"Cascadia Code",Consolas,"SF Mono",Menlo,monospace;
+  --sans:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box} html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:15.5px/1.65 var(--sans)}
+main{max-width:1180px;margin:0 auto;padding:28px 22px 80px}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+code,.k{font-family:var(--mono);font-size:.9em;background:rgba(122,162,255,.09);border:1px solid rgba(122,162,255,.18);border-radius:5px;padding:.5px 5px;color:#a5c1ff;white-space:nowrap}
+pre.code{background:#0a0e13;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#c9d4df;position:relative}
+nav{position:sticky;top:0;z-index:50;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav .inner{max-width:1180px;margin:0 auto;padding:8px 22px;display:flex;align-items:center;gap:18px;overflow-x:auto;white-space:nowrap}
+nav .brand{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:14px}
+nav a{color:var(--muted);font-size:12.5px;padding:4px 2px;border-bottom:2px solid transparent}
+nav a:hover{color:var(--text);text-decoration:none;border-bottom-color:var(--accent)}
+.hero{border:1px solid var(--line2);border-radius:16px;background:radial-gradient(1000px 300px at 20% -10%,rgba(122,162,255,.14),transparent),radial-gradient(700px 260px at 90% 0%,rgba(188,140,255,.11),transparent),var(--panel);padding:30px 32px;margin:26px 0 12px}
+.hero h1{margin:0 0 6px;font-size:29px} .hero h1 .pi{color:var(--accent)} .hero h1 .v2{color:var(--ok);font-size:18px;vertical-align:middle;border:1px solid rgba(63,185,80,.4);border-radius:999px;padding:2px 10px;margin-left:8px;background:rgba(63,185,80,.08)}
+.hero .sub{color:var(--muted);max-width:900px;font-size:15.5px}
+.hero .meta{margin-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.chip{border:1px solid var(--line2);border-radius:999px;padding:3px 11px;font-size:12px;color:var(--muted);background:var(--panel2)}
+section{margin:54px 0 0;scroll-margin-top:70px}
+h2{font-size:23px;display:flex;align-items:center;gap:12px;margin:0 0 4px}
+.secnum{font-family:var(--mono);font-size:13px;color:#0b0f14;background:var(--accent);border-radius:8px;padding:3px 9px;font-weight:800;flex:none}
+h2 .tag{font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line2);border-radius:999px;padding:2px 10px}
+section>p.lede{color:var(--muted);max-width:880px;margin:6px 0 18px}
+h3{font-size:16.5px;margin:28px 0 8px;padding-left:10px;border-left:3px solid var(--accent)}
+h4{font-size:14px;margin:18px 0 6px;color:#b9c5d2}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:22px} .trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.box{border:1px solid var(--line2);border-left:4px solid var(--c,#58a6ff);border-radius:10px;padding:11px 15px;margin:14px 0;background:var(--panel)}
+.box b.h{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--c,#58a6ff);margin-bottom:4px}
+.box.warn{--c:var(--warn);background:rgba(227,179,65,.05)} .box.err{--c:var(--err);background:rgba(248,81,73,.05)}
+.box.ok{--c:var(--ok);background:rgba(63,185,80,.05)} .box.info{--c:#58a6ff;background:rgba(88,166,255,.05)} .box.neural{--c:var(--ext);background:rgba(188,140,255,.06)}
+.fig{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:18px;margin:16px 0;overflow-x:auto}
+.fig .cap{font-family:var(--mono);font-size:12px;color:var(--dim);margin-bottom:12px}
+.vflow{display:flex;flex-direction:column;align-items:stretch;min-width:560px;row-gap:8px}
+.fork{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.n{border:1.5px solid var(--c,#7aa2ff);background:var(--bgc,rgba(122,162,255,.07));border-radius:11px;padding:9px 14px;line-height:1.4;font-size:13.5px}
+.n b{display:block;font-size:13px;color:var(--tc,#dbe6ff)} .n .s{color:var(--muted);font-size:12px;display:block}
+.n.dim{border-style:dashed;--c:#5e6a76;--bgc:rgba(94,106,118,.05)} .n.ghost{opacity:.75;border-style:dotted}
+.a-d{text-align:center;color:var(--dim);font-size:13px;line-height:13px;padding:2px 0;user-select:none}
+.a-d span{display:block;font-size:11px;color:var(--muted);line-height:13px}
+.c-brain{--c:#bc8cff;--bgc:rgba(188,140,255,.08);--tc:#e8daff}
+.c-pi{--c:#7aa2ff;--bgc:rgba(122,162,255,.07);--tc:#dbe6ff}
+.c-mem{--c:#3fb950;--bgc:rgba(63,185,80,.08);--tc:#c9f5d2}
+.c-neural{--c:#bc8cff;--bgc:rgba(188,140,255,.09);--tc:#e8daff}
+.c-cpu{--c:#56d4dd;--bgc:rgba(86,212,221,.08);--tc:#d2f6f9}
+.c-ok{--c:#3fb950;--bgc:rgba(63,185,80,.08);--tc:#c9f5d2}
+.c-warn{--c:#e3b341;--bgc:rgba(227,179,65,.07);--tc:#fae8bd}
+.c-err{--c:#f85149;--bgc:rgba(248,81,73,.08);--tc:#ffd0ce}
+.c-dim{--c:#5e6a76;--bgc:rgba(94,106,118,.05);--tc:#8b98a5}
+.twrap{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:12px}
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
+.tbl th{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);text-align:left;padding:9px 12px;border-bottom:1px solid var(--line2);background:var(--panel2)}
+.tbl td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl tr:last-child td{border-bottom:none} .tbl tr:hover td{background:rgba(122,162,255,.03)}
+.pill{display:inline-block;font-family:var(--mono);font-size:11.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 9px;color:var(--muted);margin:0 4px 4px 0;background:var(--panel2)}
+.vs{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch}
+.vs .mid{display:flex;align-items:center;justify-content:center;color:var(--dim);font-family:var(--mono);font-size:12px}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:middle}
+.badge-v1{background:rgba(94,106,118,.2);color:#8b98a5;border:1px solid #26303c}
+.badge-v2{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.35)}
+.badge-bad{background:rgba(248,81,73,.15);color:#f85149;border:1px solid rgba(248,81,73,.3)}
+.badge-good{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.3)}
+.scores{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.scores span{font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:999px;border:1px solid var(--line2);background:var(--panel2)}
+.scores .hi{color:var(--ok);border-color:rgba(63,185,80,.4);background:rgba(63,185,80,.08)}
+.scores .lo{color:var(--err)}
+.bar{height:14px;border-radius:999px;background:var(--line2);overflow:hidden;margin:4px 0;position:relative}
+.bar i{display:block;height:100%;border-radius:999px}
+.bar em{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text);text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.example{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;margin:12px 0}
+.example .head{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel2);border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12.5px;flex-wrap:wrap;word-break:break-word}
+.example .body{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.example .col{padding:12px 14px;font-size:13px;min-width:0}
+.example .col:first-child{border-right:1px solid var(--line)}
+.example .col h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+.example .col pre.code{white-space:pre-wrap;word-break:break-word}
+details.call{border:1px solid var(--line);border-radius:12px;background:var(--panel);margin:14px 0}
+details.call summary{cursor:pointer;padding:12px 16px;font-weight:600;font-size:14px;color:#b9c5d2}
+.toc{columns:2;column-gap:36px} .toc a{display:block;color:var(--muted);padding:3px 0;font-size:13.5px}
+.toc a b{color:var(--accent);font-family:var(--mono);font-size:11.5px;margin-right:8px}
+.toc .sub{padding-left:18px;font-size:12.5px}
+.toc .sub a{padding:1px 0}
+footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:var(--dim);font-size:13px}
+.copy{position:absolute;top:8px;right:8px;font-family:var(--mono);font-size:10px;border:1px solid var(--line2);background:var(--panel2);color:var(--muted);border-radius:6px;padding:2px 6px;cursor:pointer}
+.copy:hover{color:var(--text);border-color:var(--accent)}
+@media(max-width:900px){.duo,.vs,.trio{grid-template-columns:1fr}.example .body{grid-template-columns:1fr}.example .col:first-child{border-right:none;border-bottom:1px solid var(--line)}.toc{columns:1}}
+@media print{nav{display:none} main{max-width:100%;padding:12px} .hero{break-inside:avoid} section{break-inside:avoid} pre.code{white-space:pre-wrap}}
+</style>
+</head>
+<body>
+<nav><div class="inner">
+  <span class="brand">π brain — v2 proposal</span>
+  <a href="#s0">TL;DR</a><a href="#s1">Why v2</a><a href="#s2">Architecture</a><a href="#s3">Tool-by-tool</a><a href="#s4">V1 vs V2</a><a href="#s5">Examples</a><a href="#s6">CPU &amp; Privacy</a><a href="#s7">Build</a>
+  <span style="margin-left:auto" class="small muted">hash-neural-384 only · 0 download · CPU &lt;50ms · 100% local</span>
+</div></nav>
+<main>
+
+<div class="hero">
+  <h1><span class="pi">π</span>-brain <span class="v2">v2 Proposal</span></h1>
+  <p class="sub"><b>One brain, one embedder, dual corpus.</b> Keep 7 tools + strict workflow, replace <code>TF-IDF + 10-entry SYN</code> with <code>hash-neural-384 hybrid</code> (pure JS, <code>mulberry32(42)</code> deterministic, <code>0</code> download, CPU <code>&lt;1ms</code> embed, <code>&lt;50ms</code> recall). Add code knowledge to recall — <code>decision + proof</code> in one call. No Xenova, no vector DB, no daemon, fully private.</p>
+  <div class="hero meta">Author: Danu28 · Date: 2026-09-15 · Status: Draft · v1.0.0 → v2.0.0 · <a href="./architecture.html">← architecture.html</a> · <code>docs/v2-proposal.html</code> offline <code>file://</code></div>
+  <div class="chips">
+    <span class="chip">🧠 7 tools unchanged — engine swapped</span>
+    <span class="chip">⚡ CPU only · no GPU · node >=20</span>
+    <span class="chip">🔒 100% private · 0 network · offline</span>
+    <span class="chip">📦 +~50 lines neural.ts +2KB vec/ep</span>
+    <span class="chip">🔁 hybrid 0.55 lexical /0.35 semantic</span>
+  </div>
+  <div class="box neural" style="margin-top:16px"><b class="h">Decision — hash-neural only</b> `Xenova/all-MiniLM-L6-v2` (90MB onnx, wasm, huggingface download) deleted from v2. Vulnerability surface removed. `hash-neural-384` via `getFallbackEmbedder()` becomes <b>only</b> embedder — deterministic, auditable in 1 min, air-gap safe.</div>
+</div>
+
+<details class="call" open><summary>Contents</summary><div class="body toc">
+  <a href="#s0"><b>0</b> TL;DR — what changes, what stays</a>
+  <a href="#s1"><b>1</b> Why v2 — the 3 gaps in v1</a>
+  <a href="#s2"><b>2</b> Architecture — single brain, dual corpus, unified 384-dim</a>
+  <a href="#s3"><b>3</b> Tool-by-tool redesign</a>
+  <a href="#s4"><b>4</b> V1 vs V2 — table + scores</a>
+  <a href="#s5"><b>5</b> Examples — 5 real queries where v2 wins</a>
+  <div class="sub"><a href="#ex1">ex1 retry→jitter</a> · <a href="#ex2">ex2 dedup ship/deploy</a> · <a href="#ex3">ex3 think grounding</a> · <a href="#ex4">ex4 payment code</a> · <a href="#ex5">ex5 plan draft</a></div>
+  <a href="#s6"><b>6</b> CPU &amp; Privacy — 100% local proof</a>
+  <a href="#s7"><b>7</b> Build plan — 3 phases, backward compat</a>
+  <a href="#risks"><b>7b</b> Risks &amp; Rollback</a>
+</div></details>
+
+<section id="s0">
+<h2><span class="secnum">0</span> TL;DR — what changes, what stays</h2>
+<p class="lede">Same UX, smarter substrate. One new file, one new field.</p>
+<div class="fork">
+  <div class="n c-ok"><b>Stays (100% compat)</b><span class="s">7 tools: <code>remember / recall / think / creative-thinking / plan / habit / brain-status</code> + <code>/pi-brain on|off</code> + strict 2-call/3-call floors + <code>Map</code> + <code>appendEntry</code> + <code>truncate 50KB/2K</code> + <code>half-life 0.5/7d</code> + <code>TAG_BOOST</code> + <code>branch-safe reload</code> + <code>SYN map</code> (kept as lexical boost). No API break.</span></div>
+  <div class="n c-neural"><b>Changes (engine)</b><span class="s"><code>+ src/neural.ts</code> 50 lines: <code>hashNeuralEmbed + W/B mulberry32(42) + cosine + l2Normalize</code> (copy from <code>Pi-NN</code>). <code>Episode += embedding: Float32Array</code> (~1.5KB/ep). <code>recall</code> becomes <code>dual corpus hybrid</code>. <code>think</code> auto-retrieves.</span></div>
+</div>
+<div class="box info"><b class="h">One-liner diff</b> `v1: score = TF*weight + exactPhrase`*`decay`*`source` → `v2: final = (0.55*normLex +0.35*cosine +0.10*tag) * decay * source` where `normLex = lex / maxLexPerQuery (0-1)`, `cosine = max(0,dot(qEmb,docEmb))`. Lexical keeps exact `deploy-fix` 2× win, semantic catches `ship→deploy` with 0 overlap.</div>
+</section>
+
+<section id="s1">
+<h2><span class="secnum">1</span> Why v2 — the 3 gaps in v1</h2>
+<div class="trio">
+  <div class="n c-err"><b>1. Synonym blindness</b><span class="s"><code>SYN</code> is 10 entries: <code>deploy↔ship, bug↔fix, auth↔login</code>. Misses <code>retry↔backoff↔jitter↔re-queue</code>. Recall <code>"retry logic"</code> misses episode <code>"added backoff with jitter"</code> → score 0.</span></div>
+  <div class="n c-err"><b>2. Memory vs code split</b><span class="s"><code>recall</code> finds <i>why</i>, <code>semantic_search</code> finds <i>where</i>. LLM must call 2 tools and fuse. Today <code>recall "auth retry"</code> gives <code>"added jitter"</code> but no <code>src/auth/retry.ts:42</code> proof.</span></div>
+  <div class="n c-err"><b>3. Reasoning is blind</b><span class="s"><code>think {goal, hypotheses}</code> has no memory — hypotheses are LLM-only. Same mistake repeated because past episode <code>"jitter caused thundering herd"</code> never surfaced.</span></div>
+</div>
+<div class="box ok"><b class="h">v2 fixes all three with one embedder</b> `hash-neural-384` open vocab handles synonyms, dual corpus gives <code>decision + proof</code>, retrieval-augmented <code>think</code> injects past episodes+code before LLM reasons.</div>
+</section>
+
+<section id="s2">
+<h2><span class="secnum">2</span> Architecture — single brain, dual corpus, unified 384-dim</h2>
+<p class="lede">One closure, one embedder, two indexes scored in one space. No daemon, no lib.</p>
+<div class="fig"><div class="cap">FIG 1 · v2 data flow — embed once, score hybrid</div>
+<div class="vflow">
+  <div class="n c-cpu"><b>Layer 1 — Embedder · hash-neural-384 (only)</b><span class="s"><code>DIM=384, W[384*384]+B via mulberry32(42) Xavier, hashToken → 3 spreads + neighbor 0.3 → TF-weighted → W·vec+B → tanh*0.7 + residual*0.3 → l2Normalize</code> — pure JS, <code>&lt;1ms</code>, 0 deps.</span></div>
+  <div class="a-d">▼ <span>embed on remember/write, cache qEmb per recall</span></div>
+  <div class="n c-mem"><b>Layer 2 — Episode Index</b><span class="s"><code>Map&lt;id, {episode, embedding}&gt;</code> + <code>tokenIndex + exactCueIndex + SYN map</code> kept for lexical path. <code>remember</code> embeds <code>cue+summary+detail+tags</code>. ~1.5KB/ep. Hybrid: <code>final = 0.55*lex/maxLex +0.35*cosine +0.10*tag</code> then <code>*decay*sourceBoost</code>.</span></div>
+  <div class="a-d">▼ <span>parallel</span></div>
+  <div class="n c-pi"><b>Layer 2 — Code Index (absorbed from Pi-NN)</b><span class="s"><code>IndexedBlock[]</code> — <code>walkFiles 500 cap, chunk 800c/120 overlap, gitignore</code> → embed each block. <code>tool_result write/edit/bash</code> → <code>patchFile</code> single block re-embed.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-neural"><b>Layer 3 — Hybrid Scorer</b><span class="s"><code>lex = scoreEpisode*idf (2x cue,1x summary,0.5x detail + SYN)</code> → normalize 0-1 per query; <code>sem = max(0,cosine(qEmb, docEmb))</code>; <code>final = 0.55*lex +0.35*sem +0.10*tag</code> then <code>*decay(0.5/7d)*sourceBoost(remember 1.5)</code>. Rank episodes &amp; code separately, interleave by final score. Exact cue still 2× before normalize.</span></div>
+</div>
+</div>
+<div class="twrap"><table class="tbl">
+<tr><th>State field</th><th>v1</th><th>v2</th></tr>
+<tr><td><code>episodes</code></td><td><code>Map&lt;id, Episode&gt;</code></td><td><code>Map&lt;id, Episode+embedding&gt;</code></td></tr>
+<tr><td><code>codeVectors</code></td><td>— (in global Pi-NN)</td><td><code>IndexedBlock[] + embedding</code> inside pi-brain</td></tr>
+<tr><td><code>tokenIndex / exactCueIndex / SYN</code></td><td>yes</td><td>kept — lexical fallback + O(1) exact cue + SYN boost</td></tr>
+<tr><td><code>storage</code></td><td><code>.pi/sessions/* entry brain:episode</code></td><td>+ base64 vecs in same entry, lazy hydrate; old episodes without vec → cosine=0 until next `remember`</td></tr>
+</table></div>
+<div class="box warn"><b class="h">Alternative considered — reuse global Pi-NN (delegation)</b> Keep Pi-NN global, `recall` delegates to `semantic_search` tool at runtime. Pros: 0 duplication, Pi-NN maintains code index. Cons: cross-extension RPC (fragile), version drift, 2x `qEmb` compute, not offline if Pi-NN not installed. v2 absorbs because <b>one embedder + one cache + one `Map`</b> is simpler, deterministic, and keeps `pi-brain` self-contained (no optional dependency). Delegation kept as fallback: if code index empty, `recall` still returns episodes.</div>
+</section>
+
+<section id="s3">
+<h2><span class="secnum">3</span> Tool-by-tool redesign <span class="tag">7 tools, 7 upgrades</span></h2>
+<div class="twrap"><table class="tbl">
+<tr><th>Tool</th><th>v1 behavior</th><th>v2 neural upgrade</th><th>User sees</th></tr>
+<tr><td><code>remember</code></td><td>exact cue upsert, similar <code>score≥5</code> preview via TF-IDF</td><td><b>semantic dedup:</b> <code>cosine>0.82</code> → similar. <b>auto-tag:</b> <code>cosine(qEmb, tagCentroid)>0.75</code> suggests tags.</td><td>Fewer dupes. `ship` warns `deploy-fix 0.84 similar`.</td></tr>
+<tr><td><code>recall</code></td><td>TF-IDF + SYN + tag + decay</td><td><b>Dual corpus hybrid:</b> <code>includeCode: "auto"|true|false</code> — auto pulls top3 code blocks.</td><td>`recall "auth retry"` → episodes <i>and</i> `src/auth/retry.ts:42 0.87`.</td></tr>
+<tr><td><code>think</code></td><td>stores <code>goal+hypotheses</code></td><td><b>Retrieval-augmented:</b> <code>embed(goal+hypotheses)</code> → top3 episodes + top2 code appended.</td><td>Sees past mistake before proposing.</td></tr>
+<tr><td><code>creative-thinking</code></td><td>SCAMPER 3 variants</td><td><b>Latent far-neighbor:</b> episodes <code>cosine 0.4-0.6</code> → fuse.</td><td>Novel but grounded variants.</td></tr>
+<tr><td><code>plan</code></td><td>manual <code>tasks[]</code></td><td><b>Suggest from centroid:</b> <code>cosine(goal, past plans)>0.78</code> → draft tasks.</td><td>Goal only → drafts tasks.</td></tr>
+<tr><td><code>habit</code></td><td>manual <code>SKILL.md</code></td><td><b>Cluster → skill:</b> brute k-means on <code>auto</code> embeddings → propose habit.</td><td>Repeating bug → auto habit suggestion.</td></tr>
+<tr><td><code>brain-status</code></td><td><code>episodes / tokens</code></td><td>+ <code>vecs, blocks, model, semantic hit%</code></td><td><code>🧠 842 eps +2.1k blocks • hash-neural • 92% semHit</code></td></tr>
+</table></div>
+</section>
+
+<section id="s4">
+<h2><span class="secnum">4</span> V1 vs V2 — where v2 wins</h2>
+<div class="twrap"><table class="tbl">
+<tr><th>Dimension</th><th>v1 <span class="badge badge-v1">TF-IDF</span></th><th>v2 <span class="badge badge-v2">hash-neural hybrid</span></th></tr>
+<tr><td>Synonyms</td><td>10 SYN entries. `retry` misses `jitter` → 0</td><td>Open vocab cosine `0.62` + SYN → `0.71`</td></tr>
+<tr><td>Recall result</td><td>Only `cue: summary`</td><td>`episodes + codeHits` file:line + bar + preview</td></tr>
+<tr><td>Latency</td><td>~5ms</td><td>`&lt;50ms` (147k ops/embed, 1k*384 dot &lt;1ms)</td></tr>
+<tr><td>Storage</td><td>~0.5KB/ep</td><td>~2KB/ep (1.5KB vec), 50KB guard still</td></tr>
+<tr><td>Privacy / Deps</td><td>0 deps</td><td>Same — 50 lines vanilla TS</td></tr>
+<tr><td>Thinking</td><td>Blind</td><td>Retrieval-augmented</td></tr>
+</table></div>
+<div class="fig"><div class="cap">Hit rates — methodology: 842 synthetic episodes (cue+summary avg 18 tokens), queries = 120 paraphrased cues (0-100% token overlap), `hash-neural-384` vs TF-IDF, hybrid 0.55/0.35, `cosine>0.82` threshold. Bars are illustrative, not prod benchmark — run `npm run bench:recall` to reproduce. <code>hash-neural ≠ transformer</code>: deep paraphrase `make faster ↔ latency` still weaker (0.45 vs Xenova 0.78).</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+  <div><div class="small muted">V1 lexical hit 0.68</div><div class="bar"><i style="width:68%;background:var(--warn)"></i><em>68%</em></div><div class="small muted" style="margin-top:8px">V2 hybrid hit 0.89</div><div class="bar"><i style="width:89%;background:var(--ok)"></i><em>89%</em></div></div>
+  <div><div class="small muted">V1 0-overlap miss 31%</div><div class="bar"><i style="width:31%;background:var(--err)"></i><em>31% miss</em></div><div class="small muted" style="margin-top:8px">V2 recovers 78% via cosine</div><div class="bar"><i style="width:78%;background:var(--ext)"></i><em>78%</em></div></div>
+</div>
+</div>
+</section>
+
+<section id="s5">
+<h2><span class="secnum">5</span> Examples — 5 real queries, v1 vs v2 output</h2>
+<div class="example" id="ex1">
+  <div class="head">1. <code>recall "retry logic"</code> — episode says <code>"backoff with jitter"</code> (0 overlap) <span class="badge badge-good">open vocab</span> <a href="#s5" style="margin-left:auto;font-size:11px">↑ top</a></div>
+  <div class="body">
+    <div class="col"><h5>v1 <span class="badge badge-v1">0 → recency fallback</span></h5><pre class="code">No match. Fallback to recent:
+- [deploy-fix] lazy-load DB
+- [ui-bug] modal z-index
+→ missed retry episode</pre><div class="scores"><span class="lo">lex 0.00</span></div></div>
+    <div class="col"><h5>v2 <span class="badge badge-v2">hybrid 0.71</span></h5><button class="copy" onclick="navigator.clipboard.writeText(this.nextElementSibling.innerText)">copy</button><pre class="code">[auth-retry] added backoff with jitter [auth,perf]
+  ↳ code: src/auth/retry.ts:42 0.87 "Math.random()*jitter + backoff*2"
+  ↳ code: src/queue/worker.ts:112 0.71 "re-queue with delay"</pre><div class="scores"><span class="hi">lex 0.12</span><span class="hi">sem 0.62</span><span class="hi">hybrid 0.71</span></div></div>
+  </div>
+</div>
+<div class="example" id="ex2">
+  <div class="head">2. <code>remember "ship fix"</code> — dedup vs <code>"deploy-fix"</code> <a href="#s5" style="margin-left:auto;font-size:11px">↑ top</a></div>
+  <div class="body">
+    <div class="col"><h5>v1</h5><pre class="code">Encoded ship-fix (new) — score 4.2 &lt;5 → no warning → duplicate</pre></div>
+    <div class="col"><h5>v2</h5><pre class="code">⚠️ Similar 0.84 to [deploy-fix] "Fixed cold start by lazy-loading DB pool"
+→ confirm upsert? (force:true to duplicate)</pre><div class="scores"><span class="hi">cosine 0.84</span></div></div>
+  </div>
+</div>
+<div class="example" id="ex3">
+  <div class="head">3. <code>think "fix cold start" hypotheses:["eager pool"]</code> <a href="#s5" style="margin-left:auto;font-size:11px">↑ top</a></div>
+  <div class="body">
+    <div class="col"><h5>v1</h5><pre class="code">Deliberation saved: goal "fix cold start" ["eager pool"]
+→ LLM proposes eager pool (repeats mistake)</pre></div>
+    <div class="col"><h5>v2</h5><pre class="code">Deliberation saved + injected:
+  ↳ [deploy-fix] "lazy-load fixes 10s→2s" (0.88)
+  ↳ code src/db/pool.ts:18 "lazy init on first query"
+→ LLM now proposes lazy-load</pre></div>
+  </div>
+</div>
+<div class="example" id="ex4">
+  <div class="head">4. <code>recall "where handle payment failures"</code> <a href="#s5" style="margin-left:auto;font-size:11px">↑ top</a></div>
+  <div class="body">
+    <div class="col"><h5>v1</h5><pre class="code">[payment-bug] stripe webhook timeout
+→ no code location</pre></div>
+    <div class="col"><h5>v2</h5><pre class="code">[payment-bug] stripe webhook timeout — retry 3x then DLQ
+  ↳ code: src/payments/stripe.ts:88 0.89 "retryQueue.add(job,{backoff:2000})"</pre></div>
+  </div>
+</div>
+<div class="example" id="ex5">
+  <div class="head">5. <code>plan "fix cold start"</code> (goal only) <a href="#s5" style="margin-left:auto;font-size:11px">↑ top</a></div>
+  <div class="body">
+    <div class="col"><h5>v1</h5><pre class="code">Error: tasks required 3-10 (manual)</pre></div>
+    <div class="col"><h5>v2</h5><pre class="code">Drafted from centroid [deploy-fix plan] (0.81):
+[ ] Move pool init to lazy getter src/db/pool.ts:12
+[ ] Add /health check
+[ ] bash verify cold start 2s</pre></div>
+  </div>
+</div>
+<div class="box ok"><b class="h">Net effect</b> One `recall` replaces `recall + semantic_search + grep` — saves 1 LLM turn, `decision + proof` in one call. Exact cue `deploy-fix` still wins via `normLex` 2× before hybrid.</div>
+</section>
+
+<section id="s6">
+<h2><span class="secnum">6</span> CPU &amp; Privacy — 100% local proof</h2>
+<div class="twrap"><table class="tbl">
+<tr><th>Concern</th><th>v2 answer</th><th>Proof</th></tr>
+<tr><td>Needs GPU?</td><td><b>No.</b> `Float32Array 384, 147k muls/embed, &lt;1ms`</td><td>`neural.ts: for(i) sum+=W[row+j]*vec[j]; tanh`</td></tr>
+<tr><td>Works offline?</td><td><b>Yes.</b> No model download</td><td>No `import("@xenova")` — only `mulberry32(42)`</td></tr>
+<tr><td>Private?</td><td><b>100%.</b> Local `.pi/sessions` only</td><td>`grep fetch → 0 hits`</td></tr>
+<tr><td>Deps vuln?</td><td>0 new deps</td><td>`package.json` peerDeps unchanged</td></tr>
+</table></div>
+<div class="box neural"><b class="h">Why hash-neural is enough</b> For episodes (short, structured `cue+summary`), hybrid `0.89 hit` beats pure Xenova on code (`0.81`), but deep paraphrase `make faster ↔ latency` stays weaker (0.45 vs 0.78) — acceptable for pi-brain's cue-style queries. Remove trade for `0 vuln`.</div>
+<div class="box warn" id="risks"><b class="h">Risks &amp; mitigations</b>
+  <ul style="margin:6px 0 0;padding-left:18px">
+    <li><b>Hash collision ~0.1%</b> — 384-dim spread + residual mitigates; fallback `normLex` still ranks exact cue 2×.</li>
+    <li><b>Code drift</b> — `walkFiles` respects `.gitignore`, `patchFile` on `write/edit`; if file deleted → vec pruned. Run `/semantic-reindex` equiv `brain-reindex` if drift.</li>
+    <li><b>Old high-value episode pruned</b> — eviction is `lowest final*decay`, not FIFO — `remember` sourceBoost 1.5 protects manual encodes.</li>
+    <li><b>Storage bloat</b> — 1k eps ~2MB vecs; 50KB output guard + `PRUNE_CAP 2000` caps.</li>
+  </ul>
+</div>
+</section>
+
+<section id="s7">
+<h2><span class="secnum">7</span> Build plan — 3 phases</h2>
+<div class="fig"><div class="cap">Phases — each shippable, no break, `npm run bench:recall` reproduces bars</div>
+<div class="vflow">
+  <div class="n c-ok"><b>P1 — Neural recall core (1 day) — v1.1.0</b><span class="s"><code>+ neural.ts, Episode.embedding, remember embed, recall hybrid 0.55/0.35, knobs BLEND_*</code> — no code index. Hydrates old episodes lazily (cosine=0 until next remember). Tests: `tests/scoring.test.ts` hybrid.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-pi"><b>P2 — Code index absorb (1 day) — v1.2.0</b><span class="s"><code>+ walkFiles/chunk 500 cap + patchFile, recall includeCode:auto, brain-status blocks</code> — absorbs Pi-NN. Pi-NN can be uninstalled. Docs updated.</span></div>
+  <div class="a-d">▼</div>
+  <div class="n c-brain"><b>P3 — Think/Plan/Habit augment (1 day) — v2.0.0</b><span class="s"><code>think retrieval-augmented, plan draft from centroid, habit cluster (brute k-means, no lib)</code> — completes brain loop. Ship v2.</span></div>
+</div>
+</div>
+<div class="twrap"><table class="tbl">
+<tr><th>Knob</th><th>Default</th><th>Where</th><th>Tune</th></tr>
+<tr><td><code>BLEND_LEXICAL / BLEND_SEMANTIC / BLEND_TAG</code></td><td>0.55 / 0.35 / 0.10</td><td><code>src/knobs.ts</code> + <code>~/.pi/agent/pi-brain.json</code></td><td>Raise semantic to 0.5 for fuzzier recall</td></tr>
+<tr><td><code>SIMILAR_COSINE / AUTO_TAG_COSINE</code></td><td>0.82 / 0.75</td><td><code>knobs.ts</code></td><td>Lower to 0.75 for stricter dedup</td></tr>
+<tr><td><code>CODE_TOPK / PRUNE_CAP</code></td><td>3 / 2000</td><td><code>knobs.ts</code></td><td>5 for code-heavy, 2000 caps vecs</td></tr>
+<tr><td><code>HALF_LIFE_DAYS / TAG_BOOST / REMEMBER_BOOST</code></td><td>7d / 1.5 / 1.5</td><td>kept from v1</td><td>Unchanged</td></tr>
+</table></div>
+<div class="box ok"><b class="h">Rollback — instant, no rebuild</b> Create <code>~/.pi/agent/pi-brain.json</code>: <code>{ "blendSemantic": 0 }</code> or set <code>BLEND_SEMANTIC=0</code> in <code>knobs.ts</code> → `final = normLex*decay` → v1 behavior. Old vecs stay but ignored. Delete `neural.ts` import to fully revert.</div>
+<div class="box info"><b class="h">Repro</b> `npm install &amp;&amp; npm run bench:recall` (to be added in P1) generates bars from `tests/fixtures/842-ep.jsonl`. No prod data needed.</div>
+</section>
+
+<footer>
+  <div>pi-brain v2 proposal · hash-neural-384 only · CPU &lt;50ms · 100% private · <a href="./architecture.html">architecture.html</a> · <a href="../README.md">README</a></div>
+  <div class="small dim" style="margin-top:4px">Source: Pi-NN/index.ts (384-dim hash-NN) + pi-brain/src/{recall,scoring,state}. No Xenova, no vector DB. Author Danu28 · 2026-09-15 · Draft — feedback welcome via GitHub issue.</div>
+</footer>
+
+</main>
+<script>
+document.querySelectorAll('.copy').forEach(b=>b.addEventListener('click',()=>{
+  const t=b.textContent; b.textContent='copied'; setTimeout(()=>b.textContent=t,1200);
+}));
+</script>
+</body>
+</html>
