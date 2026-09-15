@@ -60,6 +60,15 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       }
       // rebuild incremental index
       rebuildIndex();
+      // v2: hydrate embeddings cache from persisted base64 (lazy: old episodes without embedding → cache miss → cosine 0)
+      try {
+        const { fromBase64 } = await import("./neural.js");
+        for (const [id, ep] of brain.episodes) {
+          if (ep.embedding) {
+            try { const v = (fromBase64 as any)(ep.embedding); if (v?.length === 384) brain.embeddings.set(id, v); } catch {}
+          }
+        }
+      } catch {}
       // T2 prune expired after rebuild (also does LRU eviction if >PRUNE_CAP, so single call suffices)
       pruneExpired(pi);
       // file wins: /pi-brain on stays on across sessions until /pi-brain off

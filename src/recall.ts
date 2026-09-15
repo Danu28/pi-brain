@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PRUNE_CAP } from "./knobs";
-import { avgIdf, expandTokens, scoreEpisode, tokenize } from "./scoring";
+import { BLEND_SEMANTIC, PRUNE_CAP } from "./knobs";
+import { hashNeuralEmbed } from "./neural";
+import { avgIdf, expandTokens, hybridScore, scoreEpisode, tokenize } from "./scoring";
 import { brain } from "./state";
 import type { BrainEpisode } from "./types";
 
@@ -39,6 +40,7 @@ export function pruneExpired(pi: ExtensionAPI): number {
     if (e.expiresAt && e.expiresAt < now) {
       unindexEpisode(e);
       brain.episodes.delete(id);
+      brain.embeddings.delete(id);
       n++;
     }
   }
@@ -55,6 +57,7 @@ export function pruneExpired(pi: ExtensionAPI): number {
     if (oldest.source !== "auto") (pi as any).events?.emit?.("brain:overload", { evictRemember: oldest.cue, size: brain.episodes.size });
     unindexEpisode(oldest);
     brain.episodes.delete(oldest.id);
+    brain.embeddings.delete(oldest.id);
     n++;
     brain.recallMemo.clear();
   }
@@ -65,9 +68,18 @@ export function pruneExpired(pi: ExtensionAPI): number {
 export function rankedForQuery(query: string, limit: number, filterTags?: string[]): BrainEpisode[] {
   const terms = [...new Set(expandTokens(tokenize(query)))];
   const idf = avgIdf(terms);
-  return candidatePool(query)
-    .map((e) => ({ e, s: scoreEpisode(e, query, filterTags as any) * idf }))
-    .filter((x) => x.s > 0)
+  const pool = candidatePool(query);
+  // v2 hybrid: compute qEmb once, maxLex for normalization
+  let qEmb: Float32Array | null = null;
+  if (BLEND_SEMANTIC > 0 && query.trim()) {
+    try { qEmb = hashNeuralEmbed(query); } catch { qEmb = null; }
+  }
+  // maxLex for normLex (lexical magnitude)
+  const lexScores = pool.map(e => scoreEpisode(e, query, filterTags as any) * idf);
+  const maxLex = Math.max(1, ...lexScores);
+  return pool
+    .map((e, i) => ({ e, s: hybridScore(e, query, filterTags as any, qEmb as any, maxLex, idf), lex: lexScores[i] }))
+    .filter((x) => x.s > 0 || x.lex > 0)
     .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
     .slice(0, limit)
     .map((x) => x.e);

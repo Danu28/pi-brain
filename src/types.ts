@@ -11,6 +11,7 @@ export type BrainEpisode = {
   tags?: string[];
   refs?: string[];
   expiresAt?: number;
+  embedding?: string; // base64 Float32Array[384] hash-neural, lazy hydrate
 };
 
 export type BrainPlan = {

@@ -9,15 +9,15 @@
 - **v1.2.0** → P2: code index absorb.
 - **v2.0.0** → P3: think/plan/habit augment.
 
-## P1 — Neural recall core (1 day)
-- [x] `src/neural.ts` pure JS hash-neural-384 (0 deps)
-- [x] `src/knobs.ts` BLEND_LEXICAL 0.55 / BLEND_SEMANTIC 0.35 / BLEND_TAG 0.10, SIMILAR_COSINE 0.82
-- [ ] `Episode.embedding?: Float32Array` + base64 persistence in `storage.ts`
-- [ ] `remember` embeds `cue+summary+detail+tags`, warns if `cosine>SIMILAR_COSINE`
-- [ ] `scoring.ts` hybrid: `final = (0.55*normLex +0.35*cosine +0.10*tag) * decay * sourceBoost`, SYN kept
-- [ ] `recall.ts` uses `hybridScore`, keeps `tokenIndex/exactCueIndex`, adds `includeCode` stub (no code yet)
-- [ ] `brain-status` shows `vecs / model: hash-neural-384`
-- [ ] `tests/neural.test.ts` + `tests/scoring-hybrid.test.ts`, `npm run typecheck && npm test`
+## P1 — Neural recall core (1 day) — ✅ DONE on v2
+- [x] `src/neural.ts` pure JS hash-neural-384 (0 deps, mulberry32 42, <1ms)
+- [x] `src/knobs.ts` BLEND_LEXICAL 0.55 / BLEND_SEMANTIC 0.35 / BLEND_TAG 0.10, SIMILAR_COSINE 0.82, NEURAL_DIM 384
+- [x] `src/types.ts` `Episode.embedding?: string` base64 + `src/state.ts` `embeddings: Map<string,Float32Array>` cache + `resetBrain` + `session.ts` hydrate + `recall.ts` prune cleanup
+- [x] `src/scoring.ts` hybrid: `hybridScore()` + `getEpisodeEmbedding()` + `episodeTextForEmbedding()`, `final = (0.55*normLex +0.35*cosine +0.10*tag) * decay * source` via maxLex norm, `BLEND_SEMANTIC=0` → v1 pure lexical
+- [x] `src/recall.ts` `rankedForQuery` hybrid + `src/tools/recall.ts` batch hybrid + perQuery hybrid + qEmb cache
+- [x] `src/tools/remember.ts` embeds on encode/upsert (`toBase64` + `brain.embeddings`), semantic dedup `cosine>0.82` alongside TF-IDF `score≥5`
+- [x] `src/tools/brain-status.ts` shows `vecs / model hash-neural-384 384d seed:42 blend 0.55/0.35/0.10 sim:0.82`
+- [x] `npm run typecheck` pass, `npm test` 21 passed (3 files)
 
 Rollback: `BLEND_SEMANTIC=0` → v1 lexical instantly.
 

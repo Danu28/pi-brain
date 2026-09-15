@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { RECALL_MEMO_MS } from "../knobs";
-import { avgIdf, expandTokens, normalizeTags, parseSince, scoreEpisode, tokenize } from "../scoring";
+import { BLEND_SEMANTIC, RECALL_MEMO_MS } from "../knobs";
+import { hashNeuralEmbed } from "../neural";
+import { avgIdf, expandTokens, hybridScore, normalizeTags, parseSince, scoreEpisode, tokenize } from "../scoring";
 import { brain } from "../state";
 import type { BrainEpisode } from "../types";
 import { truncate } from "../util";
@@ -66,13 +67,28 @@ export function registerRecall(pi: ExtensionAPI) {
         return true;
       });
       const idf = avgIdf(terms);
-      // A3 DRY: reuse terms for idf + candidatePool, single compute
-      // B3 tag-only: query empty + tags keeps 0-score via TAG_BOOST fallback — see scoring.scoreBase tag-only branch; filter above ensures AND tags
+      // v2 hybrid: precompute qEmb per query + maxLex per query for normLex (BLEND_SEMANTIC=0 → pure lexical v1)
+      const qEmbs: (Float32Array | null)[] = queries.map(q => {
+        if (!q.trim() || BLEND_SEMANTIC === 0) return null;
+        try { return hashNeuralEmbed(q); } catch { return null; }
+      });
+      const perQueryMaxLex: number[] = queries.map((q, qi) => {
+        if (!q.trim()) return 1;
+        const qIdf = avgIdf([...new Set(expandTokens(tokenize(q)))]);
+        const lex = candidates.map(e => scoreEpisode(e, q, filterTags) * qIdf);
+        return Math.max(1, ...lex);
+      });
+      const maxLex = Math.max(1, ...perQueryMaxLex);
+      // A3 DRY + B3 tag-only preserved
       const scored = candidates
         .map((e) => {
-          const raw = Math.max(...queries.map(q => scoreEpisode(e, q, filterTags)));
+          const scores = queries.map((q, qi) => {
+            const qIdf = qi < perQueryMaxLex.length ? avgIdf([...new Set(expandTokens(tokenize(q)))]) : idf;
+            return hybridScore(e, q, filterTags, qEmbs[qi] as any, perQueryMaxLex[qi] ?? maxLex, qIdf);
+          });
+          const raw = Math.max(...scores);
           if (raw === 0) return { e, s: 0 };
-          return { e, s: raw * idf };
+          return { e, s: raw };
         })
         .filter((x) => x.s > 0 || queries.every(q => q.trim() === "") || (filterTags?.length ? true : false))
         .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
@@ -87,11 +103,14 @@ export function registerRecall(pi: ExtensionAPI) {
           if (!q.trim()) continue;
           const qTerms = [...new Set(expandTokens(tokenize(q)))];
           const qIdf = avgIdf(qTerms);
+          let qEmbPer: Float32Array | null = null;
+          if (BLEND_SEMANTIC > 0 && q.trim()) try { qEmbPer = hashNeuralEmbed(q); } catch { qEmbPer = null; }
+          const qMaxLex = Math.max(1, ...candidates.map(e => scoreEpisode(e, q, filterTags) * qIdf));
           const qScored = candidates
             .map((e) => {
-              const raw = scoreEpisode(e, q, filterTags);
-              if (raw === 0) return { e, s: 0 };
-              return { e, s: raw * qIdf };
+              const s = hybridScore(e, q, filterTags, qEmbPer as any, qMaxLex, qIdf);
+              if (s === 0) return { e, s: 0 };
+              return { e, s };
             })
             .filter((x) => x.s > 0)
             .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)

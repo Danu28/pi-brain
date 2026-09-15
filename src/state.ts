@@ -29,6 +29,9 @@ export const brain = {
   recallMemo: new Map<string, { ts: number; ranked: BrainEpisode[]; text: string; perQuery?: Record<string, BrainEpisode[]> }>(),
   memoHits: 0,
   memoMisses: 0,
+  // v2 neural — runtime cache for decoded embeddings (not persisted directly)
+  embeddings: new Map<string, Float32Array>(),
+  neuralModel: "hash-neural-384" as string,
 };
 
 export function resetBrain() {
@@ -49,6 +52,7 @@ export function resetBrain() {
   brain.recallMemo.clear();
   brain.memoHits = 0;
   brain.memoMisses = 0;
+  brain.embeddings.clear();
 }
 
 export function latestPlan(): BrainPlan | null {
