@@ -25,8 +25,10 @@ export function registerBrainStatus(pi: ExtensionAPI) {
       if (overloaded) (pi as any).events?.emit?.("brain:overload", { episodes: count, percent: pct });
       // C6 prune transparency + v2 neural stats
       const vecs = [...brain.episodes.values()].filter(e=>!!e.embedding).length;
+      const codeAge = brain.codeIndexStats.lastIndexedAt ? `${Math.round((Date.now()-brain.codeIndexStats.lastIndexedAt)/60000)}m ago` : "never";
       const neuralInfo = `Neural: ${brain.neuralModel} ${NEURAL_DIM}d seed:${NEURAL_SEED} vecs:${vecs}/${count} blend:${BLEND_LEXICAL}/${BLEND_SEMANTIC}/${BLEND_TAG} sim:${SIMILAR_COSINE}`;
-      const idxStats = `Index: ${brain.tokenIndex.size} tokens → ${count} episodes (${remCount} remember, ${autoCount} auto) | cueIndex:${brain.exactCueIndex.size} | memo hits:${brain.memoHits} miss:${brain.memoMisses} | ${neuralInfo}`;
+      const codeInfo = `Code: ${brain.codeIndexStats.blocks} blocks ${brain.codeIndexStats.files} files synced ${codeAge} ${brain.codeIndexing?"(indexing)":""}`;
+      const idxStats = `Index: ${brain.tokenIndex.size} tokens → ${count} episodes (${remCount} remember, ${autoCount} auto) | cueIndex:${brain.exactCueIndex.size} | memo hits:${brain.memoHits} miss:${brain.memoMisses} | ${neuralInfo} | ${codeInfo}`;
       const gistPreview = [...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,3).map(gistForEpisode).join(" | ");
       const gistTokens = estTokens(gistPreview);
       const knobs = `Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d PRUNE_WARN=${PRUNE_WARN} PRUNE_CAP=${PRUNE_CAP} BUDGET=${BUDGET_WARN_PCT}/${BUDGET_STOP_PCT}% | NEURAL_DIM=${NEURAL_DIM} BLEND=${BLEND_LEXICAL}/${BLEND_SEMANTIC}/${BLEND_TAG} SIM=${SIMILAR_COSINE}`;

@@ -71,6 +71,16 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       } catch {}
       // T2 prune expired after rebuild (also does LRU eviction if >PRUNE_CAP, so single call suffices)
       pruneExpired(pi);
+      // v2 P2 — build code index in background (non-blocking, <2s for 500 files)
+      try {
+        const cwd = (ctx as any)?.cwd ?? process.cwd();
+        if (!brain.codeBlocks.length && !brain.codeIndexing) {
+          const { buildCodeIndex } = await import("./code.js");
+          // don't await blocking — but await for first ready within session_start timeout
+          await (buildCodeIndex as any)(cwd, (ctx as any)?.signal).catch(()=>{});
+        }
+      } catch {}
+
       // file wins: /pi-brain on stays on across sessions until /pi-brain off
       const fileMode = readMode();
       if (fileMode !== undefined) brain.brainStrict = fileMode;

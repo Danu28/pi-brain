@@ -21,12 +21,13 @@
 
 Rollback: `BLEND_SEMANTIC=0` → v1 lexical instantly.
 
-## P2 — Code index absorb (1 day)
-- [ ] `src/neural.ts` already covers embed; add `chunk.ts` (800c/120) + `walk.ts` (500 cap, gitignore)
-- [ ] `state.ts` `codeVectors: IndexedBlock[]`, `session.ts` build on `session_start`
-- [ ] `hooks.ts` `patchFile` on `write/edit/bash`
-- [ ] `recall {includeCode:"auto"|true|false}` returns `episodes + codeHits`
-- [ ] `brain-status` `blocks` count, `docs/v2-proposal.html` bars reproducible via `npm run bench:recall`
+## P2 — Code index absorb (1 day) — ✅ DONE on v2
+- [x] `src/code.ts` — walkFiles 500 cap gitignore-aware, chunk 800c/120, hashNeuralEmbed per block, buildCodeIndex <2s, patchCodeFile single-file, searchCode cosine+0.02 boost (all CPU/private, 0 deps, Pi-NN absorb)
+- [x] `src/state.ts` `codeBlocks: CodeBlock[]`, `codeFileHashes`, `codeIndexStats {files,blocks,model,lastIndexedAt}`, `codeIndexing` + `resetBrain` cleanup, `src/session.ts` builds code index on `session_start` (lazy, <2s)
+- [x] `src/hooks.ts` `patchCodeFile` on `write/edit` (cwd-relative, keeps index fresh)
+- [x] `src/tools/recall.ts` `includeCode: auto|true|false` + `filterPath`, auto detects `where/how/find/src/.ts`, returns `episodes + codeHits` (decision+proof) with `-- code (3/500 blocks)` in text, memo includes codeHits, lazy build if empty
+- [x] `src/tools/brain-status.ts` shows `Code: 0 blocks 0 files synced never` → after index `Code: 210 blocks 42 files synced 0m ago`, neural still `hash-neural-384 384d`
+- [x] `npm run typecheck` pass, `npm test` 21 passed, `npm run build` 66KB (was 42KB)
 
 ## P3 — Think/Plan/Habit augment (1 day)
 - [ ] `think` retrieval-augmented (top3 episodes + top2 code via `hashNeuralEmbed(goal)`)

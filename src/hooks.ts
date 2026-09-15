@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_TTL_MS } from "./knobs";
+import { patchCodeFile } from "./code";
 import { indexEpisode } from "./recall";
 import { scoreBase } from "./scoring";
 import { brain, isPlanDone, latestPlan } from "./state";
@@ -41,6 +42,16 @@ async function nudgeRule5(ctx: any) {
 export function registerHooks(pi: ExtensionAPI) {
   // T09: hippocampal hooks — auto-encode + consolidation (sleep replay) + T2 filter + T11 feedback
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
+    // v2 P2 — patch code index on file mutations (works even when strict off, keep code fresh)
+    try {
+      if (["write","edit"].includes(ev?.toolName) && ev?.input?.path) {
+        const cwd = (ctx as any)?.cwd ?? process.cwd();
+        const p = String(ev.input.path);
+        const rel = p.startsWith(cwd) ? p.slice(cwd.length).replace(/^[/\\]+/,"") : p;
+        // only patch if cwd file and code index already built (lazy build will handle first)
+        if (brain.codeBlocks.length) await patchCodeFile(cwd, rel).catch(()=>{});
+      }
+    } catch {}
     if (ctx?.signal?.aborted) return;
     if (!brain.brainStrict) return; // really off — no auto-encode, no failure tracking
     if (["edit", "write"].includes(ev?.toolName) && !ev?.isError) {

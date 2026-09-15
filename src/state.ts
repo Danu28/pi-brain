@@ -32,6 +32,11 @@ export const brain = {
   // v2 neural — runtime cache for decoded embeddings (not persisted directly)
   embeddings: new Map<string, Float32Array>(),
   neuralModel: "hash-neural-384" as string,
+  // v2 P2 — code index (dual corpus): code blocks from workspace, CPU/private, no daemon
+  codeBlocks: [] as Array<{ id: string; file: string; startLine: number; endLine: number; preview: string; content: string; hash: string; embedding: Float32Array }>,
+  codeFileHashes: new Map<string, string>(),
+  codeIndexStats: { files: 0, blocks: 0, model: "hash-neural-384", lastIndexedAt: null as number | null },
+  codeIndexing: false,
 };
 
 export function resetBrain() {
@@ -53,6 +58,10 @@ export function resetBrain() {
   brain.memoHits = 0;
   brain.memoMisses = 0;
   brain.embeddings.clear();
+  brain.codeBlocks.length = 0;
+  brain.codeFileHashes.clear();
+  brain.codeIndexStats = { files: 0, blocks: 0, model: "hash-neural-384", lastIndexedAt: null };
+  brain.codeIndexing = false;
 }
 
 export function latestPlan(): BrainPlan | null {
