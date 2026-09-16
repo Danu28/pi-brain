@@ -59,6 +59,38 @@ export function gistForEpisode(e: BrainEpisode): string {
   const raw = base + tagPart;
   return raw.length > 120 ? raw.slice(0,117) + "..." : raw;
 }
+
+// QDS — Question→Delete→Simplify: human-like forgetting
+// Question: is it worth keeping? Delete: drop trivia. Simplify: keep gist.
+// Relevance 0-10 at encode time — like human deciding "does this matter?"
+export function relevanceForRemember(cue: string, summary: string, detail: string | undefined, tags: string[] | undefined, refs: string[] | undefined): { score: number; label: string; reasons: string[] } {
+  let s = 0; const reasons: string[] = [];
+  const cueLen = cue.trim().length;
+  if (cueLen >= 8 && cueLen <= 30) { s += 2; reasons.push("cue specific 8-30"); }
+  else if (cueLen >= 3 && cueLen < 8) { s += 1; reasons.push("cue short"); }
+  else if (cueLen > 30) { s += 1; reasons.push("cue long"); }
+  if (cue.includes("-")) { s += 1; reasons.push("cue kebab"); }
+  const generic = new Set(["fix", "bug", "test", "note", "todo", "tmp"]);
+  if (generic.has(cue.trim().toLowerCase())) { s -= 2; reasons.push("cue generic"); }
+  const sumLen = summary.trim().length;
+  if (sumLen < 20) { reasons.push("summary too short (<20)"); }
+  else if (sumLen < 50) { s += 2; reasons.push("summary 20-50"); }
+  else if (sumLen < 120) { s += 3; reasons.push("summary 50-120"); }
+  else if (sumLen < 200) { s += 2; reasons.push("summary 120-200"); }
+  else { s += 1; reasons.push("summary >200 truncated"); }
+  if (detail && detail.trim().length >= 10) { s += 1; reasons.push("detail +1"); }
+  if (tags?.length) { const add = Math.min(tags.length * 0.8, 2.4); s += add; reasons.push(`tags +${add.toFixed(1)}`); }
+  if (refs?.length) { const add = Math.min(refs.length * 0.5, 1.5); s += add; reasons.push(`refs +${add.toFixed(1)}`); }
+  s = Math.max(0, Math.min(10, Math.round(s * 10) / 10));
+  const label = s >= 7 ? "high" : s >= 4 ? "medium" : "low";
+  return { score: s, label, reasons };
+}
+export function relevanceLabel(score: number): string { return score >= 7 ? "high" : score >= 4 ? "medium" : "low"; }
+export function formatRelevance(score: number): string {
+  const pct = Math.round((score / 10) * 100);
+  const bar = "█".repeat(Math.round(score / 2)) + "░".repeat(5 - Math.round(score / 2));
+  return `${score.toFixed(1)}/10 ${pct}% ${bar} ${relevanceLabel(score)}`;
+}
 export function compressEpisodes(list: BrainEpisode[]): string {
   const seen = new Set<string>(); const out: string[] = [];
   for (const e of list) { const k = e.cue.toLowerCase().trim(); if (seen.has(k)) continue; seen.add(k); out.push(`- ${gistForEpisode(e)}`); if (out.length >= 3) break; }

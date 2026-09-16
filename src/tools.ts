@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
-import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, gistForEpisode, indexEpisode, normalizeTags, parseSince, planTaskError, scoreBase, scoreEpisode, tokenize, truncate, unindexEpisode } from "./scoring";
+import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, RELEVANCE_MIN_RECALL, RELEVANCE_MIN_REMEMBER, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, formatRelevance, gistForEpisode, indexEpisode, normalizeTags, parseSince, planTaskError, relevanceForRemember, relevanceLabel, scoreBase, scoreEpisode, tokenize, truncate, unindexEpisode } from "./scoring";
 import { brain, isVerbose, renderPlan } from "./state";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
 
@@ -24,15 +24,21 @@ export function registerTools(pi: ExtensionAPI) {
       if (!params.summary?.trim()) return { content: [{ type: "text", text: "summary must be non-empty" }], details: { error: "empty summary" } } as any;
       const tags = normalizeTags(params.tags as any);
       const refs = params.refs?.map((r: string)=>truncate(r)).slice(0,5);
+      // QDS 1) Question — does it matter enough to keep? (human forgetting)
+      const rel = relevanceForRemember(params.cue, params.summary, params.detail, tags, refs);
       const exact = [...brain.episodes.values()].find(e=>e.cue.trim().toLowerCase()===cueNorm);
       if (exact && !params.force) {
         unindexEpisode(exact); exact.summary=truncate(params.summary);
         if(params.detail) exact.detail=truncate(params.detail); if(tags) exact.tags=tags; if(refs) exact.refs=refs;
-        exact.ts=Date.now(); exact.source="remember"; delete (exact as any).expiresAt;
+        exact.ts=Date.now(); exact.source="remember"; exact.relevance = rel.score; delete (exact as any).expiresAt;
         indexEpisode(exact); await (pi as any).appendEntry?.("brain:episode", exact);
         brain.episodes.set(exact.id, exact); brain.recallMemo.clear();
         (pi as any).events?.emit?.("brain:episode:encoded", exact);
-        return { content: [{ type: "text", text: `Updated (audit: exact cue exists) ${exact.id} — was duplicate cue, merged instead of new` }], details: { id: exact.id, episode: exact, audit: "exact-cue-upsert" } };
+        return { content: [{ type: "text", text: `Updated (audit: exact cue exists) ${exact.id} — was duplicate cue, merged instead of new | relevance ${formatRelevance(rel.score)} — ${rel.reasons.join(", ")}` }], details: { id: exact.id, episode: exact, audit: "exact-cue-upsert", relevance: rel } };
+      }
+      // QDS 2) Delete — remove trivia (waste of space)
+      if (!params.force && rel.score < RELEVANCE_MIN_REMEMBER) {
+        return { content: [{ type: "text", text: `QDS Delete: not relevant enough to remember — relevance ${formatRelevance(rel.score)} (need ≥${RELEVANCE_MIN_REMEMBER})\nReasons: ${rel.reasons.join(", ")}\nTip: add detail/tags/refs or longer summary, or force:true to override` }], details: { audit: "relevance-low", relevance: rel, blocked: true } } as any;
       }
       const query=`${params.cue} ${params.summary}`, terms=[...new Set(expandTokens(tokenize(query)))], idf=avgIdf(terms);
       const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=5).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,3);
@@ -40,12 +46,13 @@ export function registerTools(pi: ExtensionAPI) {
         brain.stats.audit++; const preview=scored.map(x=>`[${x.e.cue}] ${x.e.summary} (score:${x.s.toFixed(1)})`).join("\n");
         (pi as any).events?.emit?.("brain:remember-audit", { audit: "similar-found", similar: scored.map(x=>({cue:x.e.cue, score:x.s})), blocked: true });
         if (isVerbose()) try { (pi as any).events?.emit?.("brain:verbose", `remember audit blocked ${scored.length}`); } catch {}
-        return { content: [{ type: "text", text: `Audit: ${scored.length} similar episode(s) found — not encoded.\n${preview}\n→ To update existing, reuse its cue. To force new, call remember again with force:true` }], details: { audit:"similar-found", similar:scored.map(x=>({episode:x.e,score:x.s})), blocked:true } } as any;
+        return { content: [{ type: "text", text: `Audit: ${scored.length} similar episode(s) found — not encoded.\n${preview}\n→ To update existing, reuse its cue. To force new, call remember again with force:true | relevance ${formatRelevance(rel.score)}` }], details: { audit:"similar-found", similar:scored.map(x=>({episode:x.e,score:x.s})), relevance: rel, blocked:true } } as any;
       }
-      const ep: BrainEpisode={ id:`${params.cue.replace(/[^a-z0-9-]/gi,"-").slice(0,30)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue:truncate(params.cue), summary:truncate(params.summary), detail:params.detail?truncate(params.detail):undefined, tags, refs, ts:Date.now(), source:"remember" };
+      // QDS 3) Simplify — keep gist (truncate already) + relevance visible
+      const ep: BrainEpisode={ id:`${params.cue.replace(/[^a-z0-9-]/gi,"-").slice(0,30)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue:truncate(params.cue), summary:truncate(params.summary), detail:params.detail?truncate(params.detail):undefined, tags, refs, ts:Date.now(), source:"remember", relevance: rel.score };
       await (pi as any).appendEntry?.("brain:episode", ep); brain.episodes.set(ep.id, ep); indexEpisode(ep); brain.recallMemo.clear();
       (pi as any).events?.emit?.("brain:episode:encoded", ep);
-      return { content: [{ type: "text", text: `Encoded ${ep.id}` }], details: { id: ep.id, episode: ep, audit: scored.length?"forced":"clean" } };
+      return { content: [{ type: "text", text: `Encoded ${ep.id} | relevance ${formatRelevance(rel.score)} (${rel.label}) — ${rel.reasons.join(", ")}` }], details: { id: ep.id, episode: ep, audit: scored.length?"forced":"clean", relevance: rel } };
     },
   });
 
@@ -78,12 +85,26 @@ export function registerTools(pi: ExtensionAPI) {
       }
       candidates=candidates.filter(e=>{ if(params.source&&e.source!==params.source) return false; if(sinceTs!==undefined&&e.ts<sinceTs) return false; if(e.expiresAt&&e.expiresAt<Date.now()) return false; if(filterTags?.length){ const eTags=normalizeTags(e.tags)??[]; if(!filterTags.every(ft=>eTags.includes(ft))) return false; } return true; });
       const terms=[...new Set(queries.flatMap(q=>expandTokens(tokenize(q))))], idf=avgIdf(terms);
-      const scored=candidates.map(e=>{ const raw=Math.max(...queries.map(q=>scoreEpisode(e,q,filterTags))); return raw===0?{e,s:0}:{e,s:raw*idf}; }).filter(x=>x.s>0||queries.every(q=>q.trim()==="")||!!filterTags?.length).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,limit).map(x=>x.e);
-      const ranked=scored.length?scored:candidates.sort((a,b)=>b.ts-a.ts).slice(0,limit);
+      // QDS 1) Question — challenge each episode: does it matter for query?
+      const scoredAll=candidates.map(e=>{ const raw=Math.max(...queries.map(q=>scoreEpisode(e,q,filterTags))); return raw===0?{e,s:0}:{e,s:raw*idf}; }).filter(x=>x.s>0||queries.every(q=>q.trim()==="")||!!filterTags?.length).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,limit);
+      // QDS 2) Delete — remove trivia that would divert AI (relevance < threshold)
+      const isTagOnly = queries.every(q=>q.trim()==="") && !!filterTags?.length;
+      const scored = isTagOnly ? scoredAll : scoredAll.filter(x=> x.s >= RELEVANCE_MIN_RECALL);
+      const deletedCount = scoredAll.length - scored.length;
+      const ranked=scored.length?scored.map(x=>x.e): (scoredAll.length ? [] as BrainEpisode[] : candidates.sort((a,b)=>b.ts-a.ts).slice(0,limit));
       if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any;
-      const text=ranked.length?ranked.map(e=>`[${e.cue}]${e.tags?.length?` [${e.tags.join(",")}]`:""} ${e.summary}${e.detail?" — "+e.detail.slice(0,120):""}${e.refs?.length?` refs:${e.refs.join(",")}`:""}`).join("\n"):"No episodes yet. Use remember to encode.";
-      brain.memoMisses++; brain.recallMemo.set(memoKey,{ts:Date.now(),ranked,text}); if(brain.recallMemo.size>50){ const first=brain.recallMemo.keys().next().value; if(first) brain.recallMemo.delete(first); }
-      return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked}};
+      // QDS 3) Simplify — show memory with its relevance (like human seeing relevance)
+      const withRel = scored.map(x=>({ e: x.e, s: x.s, rel: Math.min(10, Math.round(x.s*10)/10) }));
+      const text=ranked.length
+        ? withRel.map(({e,s})=> {
+            const relScore = Math.min(10, Math.round(s*10)/10);
+            const relStr = formatRelevance(relScore);
+            return `[${e.cue}] ${relStr}${e.tags?.length?` [${e.tags.join(",")}]`:""} ${e.summary}${e.detail?" — "+e.detail.slice(0,120):""}${e.refs?.length?` refs:${e.refs.join(",")}`:""}${e.relevance!==undefined?` (stored ${formatRelevance(e.relevance)})`:""}`;
+          }).join("\n") + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL}]` : "")
+        : scoredAll.length && !scored.length ? `QDS Delete: all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL} — try broader query or tags. No episodes shown to avoid diverting AI.`
+        : "No episodes yet. Use remember to encode.";
+      brain.memoMisses++; brain.recallMemo.set(memoKey,{ts:Date.now(),ranked, text}); if(brain.recallMemo.size>50){ const first=brain.recallMemo.keys().next().value; if(first) brain.recallMemo.delete(first); }
+      return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked, scores: withRel.map(x=>({ cue: x.e.cue, final: x.s, relevance: x.rel, label: relevanceLabel(x.rel) })), deletedCount, qds: "Question→Delete→Simplify"}};
     },
   });
 

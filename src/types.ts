@@ -11,6 +11,8 @@ export type BrainEpisode = {
   tags?: string[];
   refs?: string[];
   expiresAt?: number;
+  // QDS: relevance at encode time (0-10) — Question: does it matter enough to keep?
+  relevance?: number;
 };
 
 export type BrainPlan = {
