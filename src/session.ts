@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
 import { compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
+import { setFooter } from "./footer";
 import { brain, readMode, renderPlan, resetBrain } from "./state";
 import type { BrainEpisode, BrainPlan } from "./types";
 
@@ -62,8 +63,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       if (fileMode !== undefined) brain.brainStrict = fileMode;
       else if (lastMode !== undefined) brain.brainStrict = lastMode;
     } catch {}
-    // reflect in footer
-    try { (pi as any)._brainStrict = brain.brainStrict; } catch {}
+    // reflect in footer — always, with icon + color
+    setFooter(pi, ctx, brain.brainStrict);
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
@@ -83,6 +84,12 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     const front = `Brain episodes:\n${compressEpisodes(keep)}`;
     const summary = ev?.summary ? `${front}\n\n${ev.summary}` : front;
     return { summary } as any;
+  });
+
+  // keep footer in sync if mode toggled elsewhere
+  pi.on("brain:mode" as any, async (ev: any, ctx: any) => {
+    const enabled = typeof ev?.enabled === "boolean" ? ev.enabled : brain.brainStrict;
+    setFooter(pi, ctx, enabled);
   });
 
   // resources_discover deleted — .pi/skills auto-discovered, no handler needed

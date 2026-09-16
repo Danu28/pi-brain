@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { setFooter } from "./footer";
 import { brain, writeMode } from "./state";
 
 export function registerCommand(pi: ExtensionAPI) {
@@ -15,13 +16,14 @@ export function registerCommand(pi: ExtensionAPI) {
       const persist = async (enabled: boolean) => {
         brain.brainStrict = enabled;
         brain.thinkSatisfied = false;
+        brain.hasRecall = false;
         brain.needsDebugThink = false;
         brain.needsPlanUpdate = false;
         brain.hasWriteEdit = false;
         brain.hasRemember = false;
         writeMode(enabled);
         await (pi as any).appendEntry?.("brain:mode", { enabled, ts: Date.now() });
-        try { (pi as any)._brainStrict = enabled; ctx?.ui?.setStatus?.("brain", enabled ? "brain: strict" : "brain: default"); } catch {}
+        setFooter(pi, ctx, enabled);
         (pi as any).events?.emit?.("brain:mode", { enabled });
       };
       if (arg === "on" || arg === "enable" || arg === "strict") {
