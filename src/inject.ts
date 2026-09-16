@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BUDGET_STOP_PCT, BUDGET_WARN_PCT, PRUNE_WARN } from "./knobs";
 import { compressEpisodes, pruneExpired, scoreEpisode } from "./scoring";
-import { brain, latestPlan, renderPlan } from "./state";
+import { brain, isVerbose, latestPlan, renderPlan } from "./state";
 import type { BrainEpisode } from "./types";
 
 function rankedEpisodes(query: string, n: number): BrainEpisode[] {
@@ -32,8 +32,9 @@ export function registerInjection(pi: ExtensionAPI) {
       const ranked = rankedEpisodes(query, 3);
       const deltaRanked = budgetTrim(ranked, pct);
       // observability: trace auto-recall + budget-trim (no behavior change)
-      if (deltaRanked.length !== ranked.length) (pi as any).events?.emit?.("brain:budget-trim", { mode: "strict", pct, before: ranked.length, after: deltaRanked.length, query: query.slice(0, 120) });
+      if (deltaRanked.length !== ranked.length) { brain.stats.budgetTrim++; (pi as any).events?.emit?.("brain:budget-trim", { mode: "strict", pct, before: ranked.length, after: deltaRanked.length, query: query.slice(0, 120) }); if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:budget-trim strict ${ranked.length}→${deltaRanked.length} pct ${pct}%`, "info"); } catch {} }
       (pi as any).events?.emit?.("brain:auto-recall", { mode: "strict", query: query.slice(0, 120), pct, ranked: ranked.map(e=>({id:e.id,cue:e.cue})), kept: deltaRanked.map(e=>({id:e.id,cue:e.cue})), injected: deltaRanked.length });
+      if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:auto-recall strict "${query.slice(0,40)}" → ${deltaRanked.length}/${ranked.length} episodes`, "info"); } catch {}
       const context = deltaRanked.length
         ? compressEpisodes(deltaRanked)
         : "(no relevant episodes — scan current dir: bash ls + read relevant files smart (only relevant) to find context)";
@@ -53,8 +54,8 @@ export function registerInjection(pi: ExtensionAPI) {
     const rawRecent: BrainEpisode[] = brain.episodes.size ? (q.trim() ? rankedEpisodes(q, 1) : [...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,1)) : [];
     let recent: BrainEpisode[] = brain.episodes.size ? budgetTrim(rawRecent, pct) : [];
     // observability: trace default auto-recall + budget-trim
-    if (rawRecent.length !== recent.length) (pi as any).events?.emit?.("brain:budget-trim", { mode: "default", pct, before: rawRecent.length, after: recent.length, query: q.slice(0, 120) });
-    if (recent.length || rawRecent.length) (pi as any).events?.emit?.("brain:auto-recall", { mode: "default", query: q.slice(0, 120), pct, ranked: rawRecent.map(e=>({id:e.id,cue:e.cue})), kept: recent.map(e=>({id:e.id,cue:e.cue})), injected: recent.length });
+    if (rawRecent.length !== recent.length) { brain.stats.budgetTrim++; (pi as any).events?.emit?.("brain:budget-trim", { mode: "default", pct, before: rawRecent.length, after: recent.length, query: q.slice(0, 120) }); if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:budget-trim default ${rawRecent.length}→${recent.length}`, "info"); } catch {} }
+    if (recent.length || rawRecent.length) { (pi as any).events?.emit?.("brain:auto-recall", { mode: "default", query: q.slice(0, 120), pct, ranked: rawRecent.map(e=>({id:e.id,cue:e.cue})), kept: recent.map(e=>({id:e.id,cue:e.cue})), injected: recent.length }); if (isVerbose() && recent.length) try { (ctx as any)?.ui?.notify?.(`brain:auto-recall default → ${recent[0]?.cue ?? "none"}`, "info"); } catch {} }
     const recentThink = brain.deliberations.slice(-1);
     if (!recent.length && !recentThink.length && !planDef) return;
     const parts: string[] = [];
@@ -63,7 +64,8 @@ export function registerInjection(pi: ExtensionAPI) {
     if (planDef) parts.push(`Active plan:\n${renderPlan(planDef)}\n(id: ${planDef.id})`);
     // also respect budget warn: if warn, only 1 block
     if (pct !== undefined && pct > BUDGET_WARN_PCT && parts.length > 1) {
-      (pi as any).events?.emit?.("brain:budget-trim", { mode: "default-blocks", pct, before: parts.length, after: 1 });
+      brain.stats.budgetTrim++; (pi as any).events?.emit?.("brain:budget-trim", { mode: "default-blocks", pct, before: parts.length, after: 1 });
+      if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:budget-trim blocks ${parts.length}→1 pct ${pct}%`, "info"); } catch {}
       return { message: { role: "system", content: parts[0] } } as any;
     }
     return { message: { role: "system", content: parts.join("\n\n") } } as any;
@@ -85,6 +87,7 @@ export function registerInjection(pi: ExtensionAPI) {
       }
       return true;
     });
-    if (changed) { (pi as any).events?.emit?.("brain:context-dedup", { deduped: true, before: msgs.length, after: deduped.length }); return { messages: deduped } as any; }
+    if (changed) { brain.stats.dedup++; (pi as any).events?.emit?.("brain:context-dedup", { deduped: true, before: msgs.length, after: deduped.length }); if (isVerbose()) try { (pi as any).events?.emit?.("brain:verbose", "context-dedup"); } catch {}
+      return { messages: deduped } as any; }
   });
 }

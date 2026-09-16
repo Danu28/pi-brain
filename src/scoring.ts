@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, PRUNE_CAP, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
-import { brain } from "./state";
+import { brain, isVerbose } from "./state";
 import type { BrainEpisode } from "./types";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -118,7 +118,7 @@ export function pruneExpired(pi: ExtensionAPI): number {
     if(oldest.source!=="auto") (pi as any).events?.emit?.("brain:overload",{evictRemember:oldest.cue,size:brain.episodes.size});
     unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; evicted.push(oldest.id); brain.recallMemo.clear();
   }
-  if (n) (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5) });
+  if (n) { brain.stats.prune += n; (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5) }); if (isVerbose()) try { (pi as any).events?.emit?.("brain:verbose", `prune ${n} → ${brain.episodes.size} left`); } catch {} }
   return n;
 }
 export function candidatePool(query: string): BrainEpisode[] {

@@ -9,6 +9,8 @@ export function writeMode(enabled: boolean) { try { mkdirSync(dirname(MODE_FILE)
 // Module-singleton brain state. pi loads an extension once per process, so a
 // module singleton (plus resetBrain() on session_start) preserves the original
 // "one factory, one Map" behavior — branch-safe waking, no class/DI.
+export function isVerbose(): boolean { return process.env.PI_BRAIN_VERBOSE === "1" || process.env.PI_BRAIN_TRACE === "1"; }
+
 export const brain = {
   // hippocampus — durable, branch-scoped
   episodes: new Map<string, BrainEpisode>(),
@@ -32,6 +34,18 @@ export const brain = {
   recallMemo: new Map<string, { ts: number; ranked: BrainEpisode[]; text: string }>(),
   memoHits: 0,
   memoMisses: 0,
+  // Tier 2 verbose counters — always incremented, surfaced in brain-status and via verbose notify
+  stats: {
+    skip: 0,
+    autoEncode: 0,
+    touch: 0,
+    prune: 0,
+    budgetTrim: 0,
+    block: 0,
+    dedup: 0,
+    nudge: 0,
+    audit: 0,
+  },
 };
 
 export function resetBrain() {
@@ -50,6 +64,15 @@ export function resetBrain() {
   brain.recallMemo.clear();
   brain.memoHits = 0;
   brain.memoMisses = 0;
+  brain.stats.skip = 0;
+  brain.stats.autoEncode = 0;
+  brain.stats.touch = 0;
+  brain.stats.prune = 0;
+  brain.stats.budgetTrim = 0;
+  brain.stats.block = 0;
+  brain.stats.dedup = 0;
+  brain.stats.nudge = 0;
+  brain.stats.audit = 0;
 }
 
 export function latestPlan(): BrainPlan | null {

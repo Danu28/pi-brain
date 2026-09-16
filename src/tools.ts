@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
 import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, gistForEpisode, indexEpisode, normalizeTags, parseSince, planTaskError, scoreBase, scoreEpisode, tokenize, truncate, unindexEpisode } from "./scoring";
-import { brain, renderPlan } from "./state";
+import { brain, isVerbose, renderPlan } from "./state";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
 
 // consolidated 7 tools — was 8 files (432 lines) → 1 file (~360 lines)
@@ -37,8 +37,9 @@ export function registerTools(pi: ExtensionAPI) {
       const query=`${params.cue} ${params.summary}`, terms=[...new Set(expandTokens(tokenize(query)))], idf=avgIdf(terms);
       const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=5).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,3);
       if (scored.length && !params.force && !exact) {
-        const preview=scored.map(x=>`[${x.e.cue}] ${x.e.summary} (score:${x.s.toFixed(1)})`).join("\n");
+        brain.stats.audit++; const preview=scored.map(x=>`[${x.e.cue}] ${x.e.summary} (score:${x.s.toFixed(1)})`).join("\n");
         (pi as any).events?.emit?.("brain:remember-audit", { audit: "similar-found", similar: scored.map(x=>({cue:x.e.cue, score:x.s})), blocked: true });
+        if (isVerbose()) try { (pi as any).events?.emit?.("brain:verbose", `remember audit blocked ${scored.length}`); } catch {}
         return { content: [{ type: "text", text: `Audit: ${scored.length} similar episode(s) found — not encoded.\n${preview}\n→ To update existing, reuse its cue. To force new, call remember again with force:true` }], details: { audit:"similar-found", similar:scored.map(x=>({episode:x.e,score:x.s})), blocked:true } } as any;
       }
       const ep: BrainEpisode={ id:`${params.cue.replace(/[^a-z0-9-]/gi,"-").slice(0,30)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue:truncate(params.cue), summary:truncate(params.summary), detail:params.detail?truncate(params.detail):undefined, tags, refs, ts:Date.now(), source:"remember" };
@@ -184,11 +185,12 @@ export function registerTools(pi: ExtensionAPI) {
       const pct=usage?.percent??(usage?.used&&usage?.total?Math.round(usage.used/usage.total*100):undefined), overloaded=(pct!==undefined&&pct>80)||count>50;
       if(overloaded) (pi as any).events?.emit?.("brain:overload",{episodes:count,percent:pct});
       const idxStats=`Index: ${brain.tokenIndex.size} tokens → ${count} episodes (${remCount} remember, ${autoCount} auto) | memo hits:${brain.memoHits} miss:${brain.memoMisses}`;
+      const verboseLine = `Verbose: skip:${brain.stats.skip} auto:${brain.stats.autoEncode} touch:${brain.stats.touch} prune:${brain.stats.prune} trim:${brain.stats.budgetTrim} block:${brain.stats.block} dedup:${brain.stats.dedup} nudge:${brain.stats.nudge} audit:${brain.stats.audit} | ${isVerbose() ? "PI_BRAIN_VERBOSE=1" : "verbose off (set PI_BRAIN_VERBOSE=1)"}`;
       const gistPreview=[...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,3).map(gistForEpisode).join(" | "), gistTokens=estTokens(gistPreview);
       const knobs=`Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d`;
       const budget=pct!==undefined?`Budget: ${pct}% ${pct>BUDGET_STOP_PCT?"(STOP inject)":pct>BUDGET_WARN_PCT?"(warn: inject 1)":""}`:`Budget: est ${gistTokens} tokens gist`;
-      const txt=`Episodes: ${count} (${remCount} remember, ${autoCount} auto)\nTokens: ${usage?.used??"?"} / ${usage?.total??"?"}${pct!==undefined?` (${pct}%)`:""}${overloaded?"\n[overload: consider compaction/pruning]":""}\nDeliberations: ${brain.deliberations.length}\n${idxStats}\nGist preview (${gistTokens} tok): ${gistPreview.slice(0,120)}\n${knobs}\n${budget}`;
-      return {content:[{type:"text",text:txt}],details:{episodes:count,autoCount,remCount,tokens:usage,recent:[...brain.episodes.values()].slice(-3),overloaded,deliberations:brain.deliberations.slice(-3),index:{tokens:brain.tokenIndex.size,episodes:count,memoHits:brain.memoHits,memoMisses:brain.memoMisses},knobs:{MAX_BYTES,MAX_LINES,TAG_BOOST,HALF_LIFE_DAYS,HALF_LIFE_FACTOR,REMEMBER_BOOST,AUTO_BOOST}}};
+      const txt=`Episodes: ${count} (${remCount} remember, ${autoCount} auto)\nTokens: ${usage?.used??"?"} / ${usage?.total??"?"}${pct!==undefined?` (${pct}%)`:""}${overloaded?"\n[overload: consider compaction/pruning]":""}\nDeliberations: ${brain.deliberations.length}\n${idxStats}\n${verboseLine}\nGist preview (${gistTokens} tok): ${gistPreview.slice(0,120)}\n${knobs}\n${budget}`;
+      return {content:[{type:"text",text:txt}],details:{episodes:count,autoCount,remCount,tokens:usage,recent:[...brain.episodes.values()].slice(-3),overloaded,deliberations:brain.deliberations.slice(-3),index:{tokens:brain.tokenIndex.size,episodes:count,memoHits:brain.memoHits,memoMisses:brain.memoMisses},stats:{...brain.stats, verbose: isVerbose()},knobs:{MAX_BYTES,MAX_LINES,TAG_BOOST,HALF_LIFE_DAYS,HALF_LIFE_FACTOR,REMEMBER_BOOST,AUTO_BOOST}}};
     },
   });
 }
