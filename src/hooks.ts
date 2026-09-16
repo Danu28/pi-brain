@@ -1,63 +1,38 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_TTL_MS } from "./knobs";
-import { indexEpisode } from "./recall";
-import { scoreBase } from "./scoring";
+import { indexEpisode, scoreBase } from "./scoring";
 import { brain, isPlanDone } from "./state";
 import type { BrainEpisode } from "./types";
 import { isNoiseBash, truncate } from "./util";
 
 export function registerHooks(pi: ExtensionAPI) {
+  const encodeAuto = async (cue: string, summary: string, markDirty = true) => {
+    if (!summary) return;
+    const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
+    await (pi as any).appendEntry?.("brain:episode", ep); brain.episodes.set(ep.id, ep); indexEpisode(ep); brain.recallMemo.clear();
+    if (markDirty) { brain.hasWriteEdit = true; brain.hasRemember = false; }
+  };
   // T09: hippocampal hooks — auto-encode + consolidation (sleep replay) + T2 filter + T11 feedback
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
     if (ctx?.signal?.aborted) return;
     if (["edit", "write"].includes(ev?.toolName) && !ev?.isError) {
       const cue = `${ev.toolName}:${(ev.input?.path ?? "").toString().slice(0, 30)}`;
       const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
-      if (summary) {
-        const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-        await (pi as any).appendEntry?.("brain:episode", ep);
-        brain.episodes.set(ep.id, ep);
-        indexEpisode(ep);
-        brain.recallMemo.clear();
-        brain.hasWriteEdit = true;
-        brain.hasRemember = false;
-      }
+      await encodeAuto(cue, summary);
     } else if (ev?.toolName === "bash" && !ev?.isError) {
       const cmd: string = (ev.input?.command ?? "").toString();
       const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
-      // T2: skip noise bash
       const isNoise = isNoiseBash(cmd, output);
-      // T11: usefulness feedback — if success keywords, touch best matching remember episode (reinforce)
       if (/passed|success|fixed|done|ok/i.test(output) && output.length > 20) {
-        // find best remember episode that shares tokens with cmd
         const best = [...brain.episodes.values()].filter(e=>e.source==="remember").map(e=>({e,s:scoreBase(e,cmd)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s)[0]?.e;
         if (best) { best.ts = Date.now(); brain.recallMemo.clear(); }
       }
       if (isPlanDone() && brain.hasRemember) {
-        // still encode but don't mark dirty — but respect noise filter
         if (isNoise) return;
-        const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = output.slice(0, 200);
-        if (summary) {
-          const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-          await (pi as any).appendEntry?.("brain:episode", ep);
-          brain.episodes.set(ep.id, ep);
-          indexEpisode(ep);
-          brain.recallMemo.clear();
-        }
+        await encodeAuto(`bash:${cmd.slice(0,30)}`, output.slice(0, 200), false);
       } else {
         if (isNoise) return;
-        const cue = `bash:${cmd.slice(0,30)}`;
-        const summary = output.slice(0, 200);
-        if (summary) {
-          const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-          await (pi as any).appendEntry?.("brain:episode", ep);
-          brain.episodes.set(ep.id, ep);
-          indexEpisode(ep);
-          brain.recallMemo.clear();
-          brain.hasWriteEdit = true;
-          brain.hasRemember = false;
-        }
+        await encodeAuto(`bash:${cmd.slice(0,30)}`, output.slice(0, 200));
       }
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {

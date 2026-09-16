@@ -2,8 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // @ts-ignore - tui resolved by pi runtime
 import { Text } from "@earendil-works/pi-tui";
 import { COMPACT_LARGE, COMPACT_SMALL, PRUNE_CAP } from "./knobs";
-import { pruneExpired, rebuildIndex } from "./recall";
-import { compressEpisodes, scoreEpisode } from "./scoring";
+import { compressEpisodes, pruneExpired, rebuildIndex, scoreEpisode } from "./scoring";
 import { brain, resetBrain } from "./state";
 import { readMode } from "./storage";
 import type { BrainEpisode, BrainPlan } from "./types";

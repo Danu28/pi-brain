@@ -3,7 +3,7 @@ import { registerCommand } from "./command";
 import { registerHooks } from "./hooks";
 import { registerInjection } from "./inject";
 import { registerSessionHandlers } from "./session";
-import { registerTools } from "./tools/index";
+import { registerTools } from "./tools";
 
 // pi-brain — human brain → pi extension
 // 5-step: Question→Delete→Simplify→Accelerate→Automate
