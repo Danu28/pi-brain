@@ -17,7 +17,6 @@ export const BUDGET_STOP_PCT = 85;
 export const PRUNE_WARN = 35;
 export const PRUNE_CAP = 40;
 // QDS relevance thresholds — Question→Delete: drop what doesn't matter
-// Like human forgetting: remembering trivia wastes space, recalling noise diverts AI
-// Remember if relevance < 3 → challenge (need force), Recall if final < 1.0 → delete (not shown)
-export const RELEVANCE_MIN_REMEMBER = 3;
-export const RELEVANCE_MIN_RECALL = 1.0;
+// Human forgetting: remembering noise pollutes memory (keep only ≥4/10), recalling noise diverts AI (show only ≥5.0, else let AI read files)
+export const RELEVANCE_MIN_REMEMBER = 4;
+export const RELEVANCE_MIN_RECALL = 5.0;

@@ -36,9 +36,9 @@ export function registerTools(pi: ExtensionAPI) {
         (pi as any).events?.emit?.("brain:episode:encoded", exact);
         return { content: [{ type: "text", text: `Updated (audit: exact cue exists) ${exact.id} — was duplicate cue, merged instead of new | relevance ${formatRelevance(rel.score)} — ${rel.reasons.join(", ")}` }], details: { id: exact.id, episode: exact, audit: "exact-cue-upsert", relevance: rel } };
       }
-      // QDS 2) Delete — remove trivia (waste of space)
+      // QDS 2) Delete — remove trivia (waste of space, pollutes memory like human forgetting)
       if (!params.force && rel.score < RELEVANCE_MIN_REMEMBER) {
-        return { content: [{ type: "text", text: `QDS Delete: not relevant enough to remember — relevance ${formatRelevance(rel.score)} (need ≥${RELEVANCE_MIN_REMEMBER})\nReasons: ${rel.reasons.join(", ")}\nTip: add detail/tags/refs or longer summary, or force:true to override` }], details: { audit: "relevance-low", relevance: rel, blocked: true } } as any;
+        return { content: [{ type: "text", text: `QDS Delete: not relevant enough to remember — relevance ${formatRelevance(rel.score)} (need ≥${RELEVANCE_MIN_REMEMBER})\nReasons: ${rel.reasons.join(", ")}\nTip: remembering noise pollutes memory — add detail/tags/refs or longer summary (50-120 chars ideal), or force:true to override` }], details: { audit: "relevance-low", relevance: rel, blocked: true } } as any;
       }
       const query=`${params.cue} ${params.summary}`, terms=[...new Set(expandTokens(tokenize(query)))], idf=avgIdf(terms);
       const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=5).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,3);
@@ -100,9 +100,9 @@ export function registerTools(pi: ExtensionAPI) {
             const relScore = Math.min(10, Math.round(s*10)/10);
             const relStr = formatRelevance(relScore);
             return `[${e.cue}] ${relStr}${e.tags?.length?` [${e.tags.join(",")}]`:""} ${e.summary}${e.detail?" — "+e.detail.slice(0,120):""}${e.refs?.length?` refs:${e.refs.join(",")}`:""}${e.relevance!==undefined?` (stored ${formatRelevance(e.relevance)})`:""}`;
-          }).join("\n") + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL}]` : "")
-        : scoredAll.length && !scored.length ? `QDS Delete: all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL} — try broader query or tags. No episodes shown to avoid diverting AI.`
-        : "No episodes yet. Use remember to encode.";
+          }).join("\n") + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL} — not shown to avoid diverting AI]` : "")
+        : scoredAll.length && !scored.length ? `No relevant episodes (all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL}). Not adding noise into context — let AI read files to get understanding instead.`
+        : "No episodes yet. Use remember to encode — only what matters in future, remembering noise pollutes memory.";
       brain.memoMisses++; brain.recallMemo.set(memoKey,{ts:Date.now(),ranked, text}); if(brain.recallMemo.size>50){ const first=brain.recallMemo.keys().next().value; if(first) brain.recallMemo.delete(first); }
       return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked, scores: withRel.map(x=>({ cue: x.e.cue, final: x.s, relevance: x.rel, label: relevanceLabel(x.rel) })), deletedCount, qds: "Question→Delete→Simplify"}};
     },
