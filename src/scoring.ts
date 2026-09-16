@@ -127,6 +127,26 @@ export function compressEpisodes(list: BrainEpisode[]): string {
   for (const e of list) { const k = e.cue.toLowerCase().trim(); if (seen.has(k)) continue; seen.add(k); out.push(`- ${gistForEpisode(e)}`); if (out.length >= 3) break; }
   return out.join("\n");
 }
+
+export function parsePlanTask(raw: string): { title: string; refs?: string[]; check?: string; estimate?: string; risk?: number; depends?: number[] } {
+  const parts = raw.split("|").map(s=>s.trim());
+  const title = parts[0] || raw;
+  let refs: string[] | undefined, check: string | undefined, estimate: string | undefined, risk: number | undefined, depends: number[] | undefined;
+  const tail = parts.slice(1).join(" | ").toLowerCase();
+  const refsM = raw.match(/refs?\s*:\s*([^|]+)/i); if (refsM) refs = refsM[1].split(/[,\s]+/).map(s=>s.trim()).filter(Boolean).slice(0,5);
+  const checkM = raw.match(/check\s*:\s*([^|]+)/i); if (checkM) check = checkM[1].trim();
+  const estM = raw.match(/estimate\s*:\s*([^|]+)/i); if (estM) estimate = estM[1].trim(); else {
+    const m = raw.match(/(\d+\s*m(?:in)?)/i); if (m) estimate = m[1];
+  }
+  const riskM = raw.match(/risk\s*:\s*(\d{1,2})/i); if (riskM) risk = Math.max(0, Math.min(10, Number(riskM[1])));
+  const depM = raw.match(/depends?\s*:\s*([^|]+)/i); if (depM) depends = depM[1].split(/[,\s]+/).map(s=>s.trim()).filter(Boolean).map(n=>Number(n)).filter(n=>!isNaN(n));
+  // also detect bare refs like src/xxx.ts in title
+  if (!refs) {
+    const fileM = title.match(/(src\/[^\s,]+\.ts|\.pi\/[^\s]+)/g);
+    if (fileM) refs = fileM.slice(0,3);
+  }
+  return { title: title.split(/\s+refs?:/i)[0].split(/\s+check:/i)[0].trim(), refs, check, estimate, risk, depends };
+}
 export function scoreBase(e: BrainEpisode, query: string, filterTags?: string[]): number {
   const terms = tokenize(query); const expanded = expandTokens(terms);
   const hasQuery = terms.length > 0 || query.trim().length > 0;

@@ -89,5 +89,5 @@ export function isPlanDone(): boolean {
 }
 
 export function renderPlan(p: BrainPlan): string {
-  return `${p.goal}\n` + p.tasks.map((t, i) => `${t.done ? "[x]" : "[ ]"} Task ${i + 1}: ${t.title}`).join("\n");
+  return `${p.goal}${(p as any).parentId?` (parent ${(p as any).parentId})`:""}${p.links?.length?` links:[${p.links.join(",")}]`:""}\n` + p.tasks.map((t: any, i:number) => `${t.done ? "[x]" : "[ ]"} Task ${i + 1}: ${t.title}${t.refs?.length?` refs:${t.refs.join(",")}`:""}${t.check?` check:${t.check.slice(0,30)}`:""}${t.risk!==undefined?` risk:${t.risk}`:""}${t.depends?.length?` depends:[${t.depends.map((d:number)=>d+1).join(",")}]`:""}${t.relevance!==undefined?` ${t.relevance.toFixed(1)}/10`:""}`).join("\n");
 }

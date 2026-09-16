@@ -15,11 +15,25 @@ export type BrainEpisode = {
   relevance?: number;
 };
 
+export type PlanTask = {
+  title: string;
+  done: boolean;
+  refs?: string[];
+  check?: string;
+  estimate?: string;
+  risk?: number;
+  depends?: number[];
+  relevance?: number;
+};
 export type BrainPlan = {
   id: string;
   goal: string;
-  tasks: { title: string; done: boolean }[];
+  tasks: PlanTask[];
   ts: number;
+  parentId?: string;
+  links?: string[]; // episode + think ids
+  debateId?: string;
+  score?: number;
 };
 
 export type Deliberation = {
