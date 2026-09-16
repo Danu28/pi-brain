@@ -5,7 +5,7 @@ export function registerHabit(pi: ExtensionAPI) {
   pi.registerTool({
     name: "habit",
     label: "Habit",
-    description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). Requires 3-10 well-split tasks that match user requirement — detailed enough that execution is easy. Tasks shown as [ ]/[x]. Pass id+done to mark complete. Single-shot: include hypotheses to auto-create deliberation. When all [x], bash: git init if needed (git rev-parse || git init) + git add -A && git commit.",
+    description: "Habitize a repeated fix: scaffold .pi/skills/brain-<name>/SKILL.md (preview if exists, force:true to overwrite, variant adds alternative, blocked in untrusted projects, undo: rm -r <dir>). Call after 2nd repeat of same remember.",
     parameters: Type.Object({
       name: Type.String({ description: "Habit name (kebab-case)" }),
       when: Type.String({ description: "When to use this habit" }),
