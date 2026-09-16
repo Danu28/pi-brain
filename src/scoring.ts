@@ -91,6 +91,37 @@ export function formatRelevance(score: number): string {
   const bar = "█".repeat(Math.round(score / 2)) + "░".repeat(5 - Math.round(score / 2));
   return `${score.toFixed(1)}/10 ${pct}% ${bar} ${relevanceLabel(score)}`;
 }
+
+// Enhanced debate: rubric 0-10 cost/risk/reversibility/relevance → time-travel + auto-prune
+// Parse "side | cost:3 risk:2 rev:9 | argues" or plain argues string
+export function parseDebater(hyp: string): { side: string; argues: string; cost?: number; risk?: number; reversibility?: number } {
+  const parts = hyp.split("|").map(s=>s.trim());
+  if (parts.length >= 2) {
+    const side = parts[0] || hyp.slice(0,30);
+    let argues = parts[parts.length-1] || hyp;
+    let cost: number | undefined, risk: number | undefined, reversibility: number | undefined;
+    const mid = parts.slice(1, -1).join(" ").toLowerCase() + " " + (parts.length===2? "" : "");
+    // also check side part for rubric? simpler: scan whole hyp for cost:/risk:/rev:
+    const scan = hyp.toLowerCase();
+    const c = scan.match(/cost\s*:\s*(\d{1,2})/); if (c) cost = Math.max(0, Math.min(10, Number(c[1])));
+    const r = scan.match(/risk\s*:\s*(\d{1,2})/); if (r) risk = Math.max(0, Math.min(10, Number(r[1])));
+    const v = scan.match(/(?:rev|reversibility)\s*:\s*(\d{1,2})/); if (v) reversibility = Math.max(0, Math.min(10, Number(v[1])));
+    // if pipe format, argues is last part without rubric
+    if (parts.length===3) argues = parts[1].includes("cost") || parts[1].includes("risk") ? parts[2] : argues;
+    return { side, argues, cost, risk, reversibility };
+  }
+  return { side: hyp.slice(0,40), argues: hyp };
+}
+export function rubricForHypothesis(hyp: string, relevance: number): { cost: number; risk: number; reversibility: number; relevance: number; avg: number } {
+  const p = parseDebater(hyp);
+  // heuristic defaults if not provided: cost 5, risk 5, rev 8 (reversible)
+  const cost = p.cost ?? 5;
+  const risk = p.risk ?? 5;
+  const reversibility = p.reversibility ?? 8;
+  // avg favors relevance + reversibility + low cost + low risk
+  const avg = Math.round(((relevance + (10 - cost) + (10 - risk) + reversibility) / 4) * 10) / 10;
+  return { cost, risk, reversibility, relevance, avg };
+}
 export function compressEpisodes(list: BrainEpisode[]): string {
   const seen = new Set<string>(); const out: string[] = [];
   for (const e of list) { const k = e.cue.toLowerCase().trim(); if (seen.has(k)) continue; seen.add(k); out.push(`- ${gistForEpisode(e)}`); if (out.length >= 3) break; }

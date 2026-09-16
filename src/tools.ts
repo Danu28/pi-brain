@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, RELEVANCE_MIN_RECALL, RELEVANCE_MIN_REMEMBER, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
-import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, formatRelevance, gistForEpisode, indexEpisode, normalizeTags, parseSince, planTaskError, relevanceForRemember, relevanceLabel, scoreBase, scoreEpisode, tokenize, truncate, unindexEpisode } from "./scoring";
+import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, formatRelevance, gistForEpisode, indexEpisode, normalizeTags, parseDebater, parseSince, planTaskError, relevanceForRemember, relevanceLabel, rubricForHypothesis, scoreBase, scoreEpisode, tokenize, truncate, unindexEpisode } from "./scoring";
 import { brain, isVerbose, renderPlan } from "./state";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
 
@@ -95,31 +95,102 @@ export function registerTools(pi: ExtensionAPI) {
       if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any;
       // QDS 3) Simplify — show memory with its relevance (like human seeing relevance)
       const withRel = scored.map(x=>({ e: x.e, s: x.s, rel: Math.min(10, Math.round(x.s*10)/10) }));
+      // enhanced: think graph traversal + time-travel replay
+      // if query is "replay:think:<id>" or "think:<id>" → return that deliberation directly
+      const replayId = queries[0]?.match(/(think:[\w:-]+)/)?.[1];
+      if (replayId) {
+        const delib = brain.deliberations.find(d=> d.id===replayId);
+        if (delib) {
+          const replayText = `Replay ${delib.id}${delib.parentId?` (parent ${delib.parentId})`:""}: ${delib.goal}\n` +
+            (delib.debaters? `Debate:\n` + delib.debaters.map((d:any,i:number)=>` ${i===0?"A":"B"}: ${d.side} ${formatRelevance(d.relevance)} — ${d.argues} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nWinner: ${delib.winner} ${delib.rubric?`— A ${delib.rubric.a.avg}/10 vs B ${delib.rubric.b.avg}/10`:""}` : `- ${delib.hypotheses.join("\n- ")}`) +
+            (delib.conclusion?`\n=> ${delib.conclusion}`:"") + (delib.links?.length?`\nLinks:[${delib.links.join(",")}]`:"");
+          return {content:[{type:"text",text:truncate(replayText)}],details:{deliberation:delib, replay:true}} as any;
+        }
+      }
+      // attach relevant think nodes (graph traversal) — like recall also finds deliberations that debated this topic
+      const thinkHits = brain.deliberations.map(d=>{
+        const pseudo = { cue: d.goal, summary: d.hypotheses.join(" "), detail: d.conclusion, tags: d.links } as any;
+        const s = scoreBase(pseudo, queries[0]||"") * 1.2; // slight boost for deliberation
+        return { d, s };
+      }).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,2);
+      const thinkBlock = thinkHits.length ? `\n\n[Think Graph — time-travel replay]:\n` + thinkHits.map(({d,s})=> `- ${d.id}${d.parentId?` (parent ${d.parentId})`:""}: ${d.goal} — winner:${d.winner||"n/a"} — ${formatRelevance(Math.min(10,Math.round(s*10)/10))} — links:[${(d.links||[]).join(",")||"none"}] — replay: recall{query:"${d.id}"}`).join("\n") : "";
       const text=ranked.length
         ? withRel.map(({e,s})=> {
             const relScore = Math.min(10, Math.round(s*10)/10);
             const relStr = formatRelevance(relScore);
             return `[${e.cue}] ${relStr}${e.tags?.length?` [${e.tags.join(",")}]`:""} ${e.summary}${e.detail?" — "+e.detail.slice(0,120):""}${e.refs?.length?` refs:${e.refs.join(",")}`:""}${e.relevance!==undefined?` (stored ${formatRelevance(e.relevance)})`:""}`;
-          }).join("\n") + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL} — not shown to avoid diverting AI]` : "")
-        : scoredAll.length && !scored.length ? `No relevant episodes (all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL}). Not adding noise into context — let AI read files to get understanding instead.`
+          }).join("\n") + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL} — not shown to avoid diverting AI]` : "") + thinkBlock
+        : scoredAll.length && !scored.length ? `No relevant episodes (all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL}). Not adding noise into context — let AI read files to get understanding instead.` + thinkBlock
+        : thinkHits.length ? `No episodes, but relevant think graph:` + thinkBlock
         : "No episodes yet. Use remember to encode — only what matters in future, remembering noise pollutes memory.";
       brain.memoMisses++; brain.recallMemo.set(memoKey,{ts:Date.now(),ranked, text}); if(brain.recallMemo.size>50){ const first=brain.recallMemo.keys().next().value; if(first) brain.recallMemo.delete(first); }
-      return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked, scores: withRel.map(x=>({ cue: x.e.cue, final: x.s, relevance: x.rel, label: relevanceLabel(x.rel) })), deletedCount, qds: "Question→Delete→Simplify"}};
+      return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked, scores: withRel.map(x=>({ cue: x.e.cue, final: x.s, relevance: x.rel, label: relevanceLabel(x.rel) })), deletedCount, thinkHits: thinkHits.map(x=>({ id: x.d.id, goal: x.d.goal, winner: x.d.winner, score: x.s })), qds: "Question→Delete→Simplify"}};
     },
   });
 
   pi.registerTool({
     name: "think", label: "Think",
-    description: "PFC deliberation scratchpad: encode a reasoning step (goal + hypotheses) to working memory, injected next turn.",
-    parameters: Type.Object({ goal: Type.String({ description: "Reasoning goal or question" }), hypotheses: Type.Array(Type.String(), { description: "Hypotheses / approaches to consider", minItems: 1, maxItems: 3 }), conclusion: Type.Optional(Type.String({ description: "Tentative conclusion" })) }),
+    description: "PFC debate graph: 2 debaters + judge + memory links — hypotheses are scored via rubric cost/risk/reversibility/relevance, winner pinned, loser pruned, graph replayable via recall. Clean: explicit, no hidden.",
+    parameters: Type.Object({
+      goal: Type.String({ description: "Reasoning goal or question" }),
+      hypotheses: Type.Array(Type.String(), { description: "Hypotheses — each debater: \"Side A | cost:3 risk:2 rev:9 | argues...\" or plain argues. QDS Delete <4 hidden.", minItems: 1, maxItems: 3 }),
+      conclusion: Type.Optional(Type.String({ description: "Tentative conclusion / judge reason" })),
+      parentId: Type.Optional(Type.String({ description: "Parent deliberation id for branching / time-travel" })),
+    }),
     async execute(_id, params, _signal) {
       if(brain.needsDebugThink&&!params.goal.trim().toLowerCase().startsWith("debug")) return {content:[{type:"text",text:"Blocked: unhappy path requires think{goal:'debug <failed Task N>', hypotheses:[cause,fix]} — goal must start with 'debug'"}],details:{error:"debug required"}} as any;
       const wasDebug=brain.needsDebugThink;
-      const entry: Deliberation={ goal:truncate(params.goal), hypotheses:params.hypotheses.map(truncate), conclusion:params.conclusion?truncate(params.conclusion):undefined, ts:Date.now() };
+      // QDS + Debate: Question each hypothesis, Delete low relevance, Simplify to rubric
+      const rawHyps = params.hypotheses.map((h:string)=>truncate(h));
+      const parsed = rawHyps.map((h:string)=>{
+        const rel = relevanceForRemember(params.goal, h, undefined, undefined, undefined);
+        const rubric = rubricForHypothesis(h, rel.score);
+        const p = parseDebater(h);
+        return { raw:h, side:p.side, argues:p.argues, rel, rubric, uses: [] as string[] };
+      });
+      // link each hypothesis to top episodes (memory graph)
+      for (const d of parsed) {
+        const pool = candidatePool(d.argues || d.side).map(e=>({e,s:scoreEpisode(e,d.argues)})).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,1).map(x=>x.e.id);
+        d.uses = pool;
+      }
+      const goalPool = candidatePool(params.goal).map(e=>({e,s:scoreEpisode(e,params.goal)})).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,2).map(x=>x.e.id);
+      // Delete trivia hypotheses (<4) if we have 3 — keep at least 2
+      let kept = parsed;
+      if (parsed.length===3) {
+        const filtered = parsed.filter(d=> d.rel.score >= 4);
+        if (filtered.length>=2) kept = filtered;
+      }
+      const hypotheses = kept.map(k=>k.raw);
+      // Judge: winner = highest rubric avg
+      let winner: string | undefined, rubric: any = undefined;
+      let debaters: any[] | undefined;
+      if (kept.length>=2) {
+        const sorted = [...kept].sort((a,b)=>b.rubric.avg - a.rubric.avg);
+        winner = sorted[0].side;
+        rubric = { a: kept[0].rubric, b: kept[1].rubric };
+        debaters = kept.map(k=>({ side:k.side, argues:k.argues, relevance:k.rel.score, uses:k.uses }));
+        // Auto-prune: loser side episodes get faster decay — emit event for observability
+        const loser = sorted[1];
+        if (loser.uses.length) (pi as any).events?.emit?.("brain:prune", { reason:"debate loser", loser: loser.side, epIds: loser.uses });
+        // Pin winner side — boost relevance
+        const winnerUses = sorted[0].uses;
+        for (const id of winnerUses) { const ep=brain.episodes.get(id); if(ep) ep.relevance = Math.min(10, (ep.relevance ?? 5) + 0.5); }
+      }
+      const links = [...new Set([...goalPool, ...kept.flatMap(k=>k.uses)])].slice(0,4);
+      const id = `think:${Date.now()}:${Math.random().toString(36).slice(2,6)}`;
+      const parentId = (params as any).parentId as string | undefined;
+      const entry: Deliberation={
+        id, parentId, goal:truncate(params.goal), hypotheses, conclusion:params.conclusion?truncate(params.conclusion): (winner ? `Judge: ${winner} wins — ` + kept.map(k=> `${k.side} ${k.rubric.avg}/10`).join(" vs ") : undefined),
+        ts:Date.now(), debaters, rubric, winner, links,
+        score: kept.length ? Math.round(kept.reduce((a,b)=>a+b.rel.score,0)/kept.length*10)/10 : undefined,
+      };
       brain.deliberations.push(entry); if(brain.deliberations.length>10) brain.deliberations.shift();
       await (pi as any).appendEntry?.("brain:deliberation", entry); brain.thinkSatisfied=true; brain.needsDebugThink=false; if(wasDebug) brain.needsPlanUpdate=true;
       (pi as any).events?.emit?.("brain:deliberation", entry);
-      return {content:[{type:"text",text:truncate(`Deliberation saved: ${params.goal}\n- ${params.hypotheses.join("\n- ")}${params.conclusion?`\n=> ${params.conclusion}`:""}`)}],details:{deliberation:entry}};
+      if (debaters) (pi as any).events?.emit?.("brain:debate", { id, goal: entry.goal, debaters, winner, rubric, links, parentId });
+      const debateBlock = debaters ? `\nDebate:\n` + debaters.map((d:any, i:number)=>` ${i===0?"A":"B"}: ${d.side} — ${formatRelevance(d.relevance)} cost:${rubric[i===0?"a":"b"].cost} risk:${rubric[i===0?"a":"b"].risk} rev:${rubric[i===0?"a":"b"].reversibility} avg:${rubric[i===0?"a":"b"].avg} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nJudge: ${winner} wins` + (links.length?` — links:[${links.join(",")}]`:"") + (parentId?` — parent:${parentId}`:"") : "";
+      const keptNote = kept.length < parsed.length ? `\n[QDS Delete: ${parsed.length - kept.length} low-relevance hypothesis hidden <4/10]` : "";
+      return {content:[{type:"text",text:truncate(`Deliberation ${id}${parentId?` (parent ${parentId})`:""}: ${params.goal}\n- ${hypotheses.join("\n- ")}${entry.conclusion?`\n=> ${entry.conclusion}`:""}${debateBlock}${keptNote}`)}],details:{deliberation:entry, debate: debaters?{debaters, winner, rubric, links, parentId}: undefined}};
     },
   });
 
@@ -198,11 +269,13 @@ export function registerTools(pi: ExtensionAPI) {
       const pct=usage?.percent??(usage?.used&&usage?.total?Math.round(usage.used/usage.total*100):undefined), overloaded=(pct!==undefined&&pct>80)||count>50;
       if(overloaded) (pi as any).events?.emit?.("brain:overload",{episodes:count,percent:pct});
       const idxStats=`Index: ${brain.tokenIndex.size} tokens → ${count} episodes (${remCount} remember, ${autoCount} auto) | memo hits:${brain.memoHits} miss:${brain.memoMisses}`;
+      const graphCount = brain.deliberations.filter(d=>d.debaters).length;
+      const graphLine = brain.deliberations.length ? `Graph: ${brain.deliberations.length} deliberations (${graphCount} debates, ${brain.deliberations.filter(d=>d.parentId).length} branched) — winners:[${brain.deliberations.slice(-3).map(d=>d.winner||"n/a").join(",")}] — replay via recall{query:"think:<id>"}` : "Graph: no deliberations";
       const verboseLine = `Verbose: skip:${brain.stats.skip} auto:${brain.stats.autoEncode} touch:${brain.stats.touch} prune:${brain.stats.prune} trim:${brain.stats.budgetTrim} block:${brain.stats.block} dedup:${brain.stats.dedup} nudge:${brain.stats.nudge} audit:${brain.stats.audit} | ${isVerbose() ? "PI_BRAIN_VERBOSE=1" : "verbose off (set PI_BRAIN_VERBOSE=1)"}`;
       const gistPreview=[...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,3).map(gistForEpisode).join(" | "), gistTokens=estTokens(gistPreview);
       const knobs=`Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d`;
       const budget=pct!==undefined?`Budget: ${pct}% ${pct>BUDGET_STOP_PCT?"(STOP inject)":pct>BUDGET_WARN_PCT?"(warn: inject 1)":""}`:`Budget: est ${gistTokens} tokens gist`;
-      const txt=`Episodes: ${count} (${remCount} remember, ${autoCount} auto)\nTokens: ${usage?.used??"?"} / ${usage?.total??"?"}${pct!==undefined?` (${pct}%)`:""}${overloaded?"\n[overload: consider compaction/pruning]":""}\nDeliberations: ${brain.deliberations.length}\n${idxStats}\n${verboseLine}\nGist preview (${gistTokens} tok): ${gistPreview.slice(0,120)}\n${knobs}\n${budget}`;
+      const txt=`Episodes: ${count} (${remCount} remember, ${autoCount} auto)\nTokens: ${usage?.used??"?"} / ${usage?.total??"?"}${pct!==undefined?` (${pct}%)`:""}${overloaded?"\n[overload: consider compaction/pruning]":""}\nDeliberations: ${brain.deliberations.length}\n${idxStats}\n${graphLine}\n${verboseLine}\nGist preview (${gistTokens} tok): ${gistPreview.slice(0,120)}\n${knobs}\n${budget}`;
       return {content:[{type:"text",text:txt}],details:{episodes:count,autoCount,remCount,tokens:usage,recent:[...brain.episodes.values()].slice(-3),overloaded,deliberations:brain.deliberations.slice(-3),index:{tokens:brain.tokenIndex.size,episodes:count,memoHits:brain.memoHits,memoMisses:brain.memoMisses},stats:{...brain.stats, verbose: isVerbose()},knobs:{MAX_BYTES,MAX_LINES,TAG_BOOST,HALF_LIFE_DAYS,HALF_LIFE_FACTOR,REMEMBER_BOOST,AUTO_BOOST}}};
     },
   });

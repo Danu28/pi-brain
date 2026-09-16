@@ -23,8 +23,16 @@ export type BrainPlan = {
 };
 
 export type Deliberation = {
+  id: string;
   goal: string;
   hypotheses: string[];
   conclusion?: string;
   ts: number;
+  parentId?: string;
+  // enhanced debate graph — set when think runs as debate
+  debaters?: { side: string; argues: string; relevance: number; uses: string[] }[];
+  rubric?: { a: { cost: number; risk: number; reversibility: number; relevance: number; avg: number }; b: { cost: number; risk: number; reversibility: number; relevance: number; avg: number } };
+  winner?: string;
+  links?: string[]; // episode ids linked
+  score?: number; // overall debate relevance
 };
