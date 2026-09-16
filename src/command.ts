@@ -3,45 +3,54 @@ import { setFooter } from "./footer";
 import { brain, writeMode } from "./state";
 
 export function registerCommand(pi: ExtensionAPI) {
-  // /pi-brain command — strict gate: on = brain-only, off = default pi
+  // /pi-brain command — strict=block, guided=nudge, off=disabled
   pi.registerCommand("pi-brain", {
-    description: "Toggle strict brain mode: /pi-brain on (answer only from brain) | /pi-brain off (default pi) | /pi-brain status",
+    description: "Toggle brain mode: /pi-brain strict (block) | /pi-brain guided (nudge) | /pi-brain off | /pi-brain status",
     getArgumentCompletions: (prefix: string) => {
-      const opts = ["on", "off", "status"];
+      const opts = ["strict", "guided", "off", "status", "on"];
       const f = opts.filter((o) => o.startsWith(prefix.toLowerCase()));
       return f.length ? f.map((v) => ({ value: v, label: v })) : null;
     },
     handler: async (args: string, ctx: any) => {
       const arg = args.trim().toLowerCase();
-      const persist = async (enabled: boolean) => {
-        brain.brainStrict = enabled;
+      const persist = async (mode: "strict" | "guided" | "off") => {
+        (brain as any).brainMode = mode;
+        brain.brainStrict = mode === "strict";
+        (brain as any).failureCount = 0;
         brain.thinkSatisfied = false;
         brain.hasRecall = false;
         brain.needsDebugThink = false;
         brain.needsPlanUpdate = false;
         brain.hasWriteEdit = false;
         brain.hasRemember = false;
-        writeMode(enabled);
-        await (pi as any).appendEntry?.("brain:mode", { enabled, ts: Date.now() });
-        setFooter(pi, ctx, enabled);
-        (pi as any).events?.emit?.("brain:mode", { enabled });
+        writeMode(mode as any);
+        await (pi as any).appendEntry?.("brain:mode", { mode, enabled: mode === "strict", ts: Date.now() });
+        setFooter(pi, ctx, mode === "strict");
+        (pi as any).events?.emit?.("brain:mode", { mode, enabled: mode === "strict" });
       };
-      if (arg === "on" || arg === "enable" || arg === "strict") {
-        await persist(true);
-        ctx.ui.notify("pi-brain: ON — all queries answered strictly from brain episodes (recall-only). Use /pi-brain off to restore default.", "info");
+      if (arg === "strict" || arg === "on" || arg === "enable") {
+        await persist("strict");
+        ctx.ui.notify("pi-brain: STRICT — hard blocks enforced. Happy: recall→think→plan→batch→plan done→remember. Unhappy: 2 continuous failures → BLOCK until think{debug}. Use /pi-brain guided or /pi-brain off.", "info");
+        return;
+      }
+      if (arg === "guided" || arg === "guide") {
+        await persist("guided");
+        ctx.ui.notify("pi-brain: GUIDED — flow guided (no hard blocks except rm -rf). Happy: recall→think→plan→batch→plan done→remember. Unhappy: 2 continuous failures → NUDGE think{debug}. Use /pi-brain strict or /pi-brain off.", "info");
         return;
       }
       if (arg === "off" || arg === "disable" || arg === "default") {
-        await persist(false);
+        await persist("off");
         ctx.ui.notify("pi-brain: OFF — default pi behavior restored.", "info");
         return;
       }
       if (arg === "status" || arg === "") {
-        const txt = `pi-brain: ${brain.brainStrict ? "ON (strict)" : "OFF (default)"}\nEpisodes: ${brain.episodes.size} | Deliberations: ${brain.deliberations.length} | Index: ${brain.tokenIndex.size} tokens\nUsage: /pi-brain on | /pi-brain off`;
+        const mode = (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off");
+        const fc = (brain as any).failureCount ?? 0;
+        const txt = `pi-brain: ${mode.toUpperCase()} (strict=block, guided=nudge, off=disabled)\nEpisodes: ${brain.episodes.size} | Deliberations: ${brain.deliberations.length} | Index: ${brain.tokenIndex.size} tokens | failures: ${fc}/2\nUsage: /pi-brain strict | /pi-brain guided | /pi-brain off | /pi-brain status`;
         ctx.ui.notify(txt, "info");
         return;
       }
-      ctx.ui.notify(`Unknown arg "${args}" — use /pi-brain on | /pi-brain off | /pi-brain status`, "warning");
+      ctx.ui.notify(`Unknown arg "${args}" — use /pi-brain strict | /pi-brain guided | /pi-brain off | /pi-brain status`, "warning");
     },
   });
 }

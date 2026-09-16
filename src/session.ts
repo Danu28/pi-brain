@@ -31,7 +31,7 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     resetBrain();
     try {
       const branch: any[] = ctx.sessionManager?.getBranch?.() ?? [];
-      let lastMode: boolean | undefined;
+      let lastMode: any | undefined;
       for (const e of branch) {
         if (e.type === "entry" && (e.entryType === "brain:episode" || e.entry_type === "brain:episode")) {
           const d = (e as any).data ?? (e as any).entry ?? e;
@@ -43,7 +43,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
         }
         if (e.type === "entry" && (e.entryType === "brain:mode" || e.entry_type === "brain:mode")) {
           const d = (e as any).data ?? (e as any).entry ?? e;
-          if (typeof d?.enabled === "boolean") lastMode = d.enabled;
+          if (typeof d?.mode === "string" && ["strict","guided","off"].includes(d.mode)) lastMode = d.mode;
+          else if (typeof d?.enabled === "boolean") lastMode = d.enabled ? "strict" : "off";
         }
         if (e.type === "entry" && (e.entryType === "brain:deliberation" || e.entry_type === "brain:deliberation")) {
           const d = (e as any).data ?? (e as any).entry ?? e;
@@ -58,13 +59,18 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       rebuildIndex();
       // clean: no auto-prune — expiry/TTL and cap eviction are explicit via pruneExpired() or brain-status
       // caller must invoke prune manually if needed; session_start does not hide episodes
-      // file wins: /pi-brain on stays on across sessions until /pi-brain off
+      // file wins: /pi-brain strict/guided stays across sessions until /pi-brain off
       const fileMode = readMode();
-      if (fileMode !== undefined) brain.brainStrict = fileMode;
-      else if (lastMode !== undefined) brain.brainStrict = lastMode;
+      const effective = fileMode !== undefined ? fileMode : lastMode;
+      if (effective !== undefined) {
+        const m = typeof effective === "string" ? effective : (effective ? "strict" : "off");
+        (brain as any).brainMode = m;
+        brain.brainStrict = m === "strict";
+      }
     } catch {}
-    // reflect in footer — always, with icon + color
-    setFooter(pi, ctx, brain.brainStrict);
+    // reflect in footer — always, with icon + color (strict=ON, guided=ON dim, off=OFF)
+    const isStrict = (brain as any).brainMode === "strict" || brain.brainStrict;
+    setFooter(pi, ctx, isStrict);
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
@@ -88,8 +94,9 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
 
   // keep footer in sync if mode toggled elsewhere
   pi.on("brain:mode" as any, async (ev: any, ctx: any) => {
-    const enabled = typeof ev?.enabled === "boolean" ? ev.enabled : brain.brainStrict;
-    setFooter(pi, ctx, enabled);
+    const mode = typeof ev?.mode === "string" ? ev.mode : (typeof ev?.enabled === "boolean" ? (ev.enabled ? "strict" : "off") : ((brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off")));
+    const isStrict = mode === "strict";
+    setFooter(pi, ctx, isStrict);
   });
 
   // resources_discover deleted — .pi/skills auto-discovered, no handler needed

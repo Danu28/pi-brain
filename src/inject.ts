@@ -26,6 +26,20 @@ Pi Tools — use exactly as defined:
 - custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)
 `;
 
+const GUIDED_STABLE_PREFIX = `[GUIDED BRAIN MODE ON — FLOW GUIDE (NO HARD BLOCKS EXCEPT SAFETY)]
+Happy: recall → think (smart reads) → [creative-thinking if novel] → plan → Turn1 read×N parallel → Turn2 edit×N+write×N+bash verify parallel → plan done → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')
+Unhappy: recall → think → [creative-thinking if novel] → plan → batch execution (if 2 continuous failures) → think{goal:"debug <issue>", hypotheses:[cause,fix]} → continue → plan done → remember → habit → commit.
+Note: 2 continuous write/edit/bash failures only trigger think (guided = nudge, not block). Safety rm -rf still blocks.
+Guide (not enforced):
+1. recall first when you need prior episodes — guided nudge only
+2. think before act (smart reads first) — guided nudge only
+3. creative-thinking only for novel tasks, skip for CRUD
+4. plan after inputs, batch execution as above
+5. shortest-diff + batch as above
+6. encode after write/edit — remember nudge
+7. git when plan done + remember
+`;
+
 export function registerInjection(pi: ExtensionAPI) {
   pi.on("before_agent_start" as any, async (ev: any, _ctx: any) => {
     brain.thinkSatisfied = false;
@@ -33,20 +47,33 @@ export function registerInjection(pi: ExtensionAPI) {
     brain.hasWriteEdit = false;
     brain.hasRemember = false;
     brain.rule5Warned = false;
+    // failureCount persists across turns for 2-continuous detection — do not reset here
     // no prune, no budgetTrim — clean: no hidden side-effects
 
-    if (brain.brainStrict) {
+    const mode = (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off");
+    if (mode === "strict") {
       const query: string = ev?.prompt ?? "";
       const recentThinkStrict = brain.deliberations.slice(-1).map((d: any) => `[think: ${d.goal}] ${d.hypotheses.join("; ")}`).join("\n");
       const thinkBlockStrict = recentThinkStrict ? `\n\nRecent deliberation:\n${recentThinkStrict}` : "";
       const plan = latestPlan();
       const planBlock = plan ? `\n\nActive plan:\n${renderPlan(plan)}\n(id: ${plan.id})` : "";
-      // clean: explicit recall nudge, NOT episodes — user must call recall tool to see episodes
       const recallNudge = query.trim()
         ? `Recall required: call recall{query: "${query.slice(0, 120).replace(/"/g, "'")}"} first.`
         : `Recall required: call recall{query: "<your task cue>"} first if you need prior episodes.`;
       const delta = `${recallNudge}${thinkBlockStrict}${planBlock}`;
       return { systemPrompt: STRICT_STABLE_PREFIX, message: { role: "system", content: delta } } as any;
+    }
+    if (mode === "guided") {
+      const query: string = ev?.prompt ?? "";
+      const recentThinkGuided = brain.deliberations.slice(-1).map((d: any) => `[think: ${d.goal}] ${d.hypotheses.join("; ")}`).join("\n");
+      const thinkBlockGuided = recentThinkGuided ? `\n\nRecent deliberation:\n${recentThinkGuided}` : "";
+      const plan = latestPlan();
+      const planBlock = plan ? `\n\nActive plan:\n${renderPlan(plan)}\n(id: ${plan.id})` : "";
+      const recallNudge = query.trim()
+        ? `Guided: consider recall{query: "${query.slice(0, 120).replace(/"/g, "'")}"} if you need prior episodes (nudge, not block).`
+        : `Guided: consider recall{query: "<your task cue>"} if relevant (nudge).`;
+      const delta = `${recallNudge}${thinkBlockGuided}${planBlock}`;
+      return { systemPrompt: GUIDED_STABLE_PREFIX, message: { role: "system", content: delta } } as any;
     }
     // default mode: only deliberation + plan — no episode injection (clean)
     const planDef = latestPlan();

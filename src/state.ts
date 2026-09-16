@@ -3,8 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
 export const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
-export function readMode(): boolean | undefined { try { const v = JSON.parse(readFileSync(MODE_FILE, "utf8")); return typeof v?.enabled === "boolean" ? v.enabled : undefined; } catch { return undefined; } }
-export function writeMode(enabled: boolean) { try { mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ enabled, ts: Date.now() }), "utf8"); } catch {} }
+export type BrainMode = "strict" | "guided" | "off";
+export function readMode(): BrainMode | undefined { try { const v = JSON.parse(readFileSync(MODE_FILE, "utf8")); if (typeof v?.mode === "string" && ["strict","guided","off"].includes(v.mode)) return v.mode as BrainMode; if (typeof v?.enabled === "boolean") return v.enabled ? "strict" : "off"; return undefined; } catch { return undefined; } }
+export function writeMode(mode: BrainMode | boolean) { try { const m: BrainMode = typeof mode === "boolean" ? (mode ? "strict" : "off") : mode; mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ mode: m, enabled: m === "strict", ts: Date.now() }), "utf8"); } catch {} }
+export function getBrainMode(): BrainMode { return (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off"); }
 
 // Module-singleton brain state. pi loads an extension once per process, so a
 // module singleton (plus resetBrain() on session_start) preserves the original
@@ -18,16 +20,18 @@ export const brain = {
   tokenIndex: new Map<string, Set<string>>(),
   // PFC scratchpad — deliberations (not durable, per-turn working memory)
   deliberations: [] as Deliberation[],
-  // /pi-brain strict gate — branch-durable, defaults off
-  brainStrict: false,
+  // /pi-brain mode gate — branch-durable, defaults off: strict=block, guided=nudge, off=disabled
+  brainMode: "off" as BrainMode,
+  brainStrict: false, // legacy mirror for compat (true when mode==="strict")
+  failureCount: 0, // consecutive write/edit/bash failures — 2 continuous triggers think
   // strict workflow enforcement (per-agent run) — clean: explicit recall/think flags, no hidden auto-encode
   thinkSatisfied: false,
   hasRecall: false,
   hasWriteEdit: false,
   hasRemember: false,
   rule5Warned: false,
-  needsDebugThink: false, // unhappy path: failure → must think before retry
-  needsPlanUpdate: false, // after debug think, must update plan before retry
+  needsDebugThink: false, // unhappy path: 2 continuous failures → must think before retry
+  needsPlanUpdate: false, // deprecated — kept for compat, not used as hard block
   cachedLatestPlan: null as BrainPlan | null,
   // plan — ordered tasklist after think
   plans: new Map<string, BrainPlan>(),
@@ -54,7 +58,9 @@ export function resetBrain() {
   brain.tokenIndex.clear();
   brain.plans.clear();
   brain.deliberations.length = 0;
+  (brain as any).brainMode = "off";
   brain.brainStrict = false;
+  (brain as any).failureCount = 0;
   brain.thinkSatisfied = false;
   brain.hasRecall = false;
   brain.hasWriteEdit = false;
