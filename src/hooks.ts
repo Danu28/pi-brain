@@ -1,49 +1,26 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { AUTO_TTL_MS } from "./knobs";
-import { indexEpisode, scoreBase, truncate } from "./scoring";
+import { truncate } from "./scoring";
 import { brain, isPlanDone, isVerbose } from "./state";
-import type { BrainEpisode } from "./types";
-function isNoiseBash(cmd: string, output: string): boolean {
-  const c = cmd.trim().toLowerCase(); if (!c) return true;
-  if (/^\s*(ls|cat|head|tail|grep|find|echo|pwd|which|whoami|env|printenv)\b/.test(c)) return output.length < 200;
-  if (/^\s*git\s+(status|diff\s*--stat|log\s*--oneline)/.test(c) && output.length < 200) return true;
-  if (output.length < 30) return false; return false;
-}
+
+// Clean hooks — no hidden auto-encode, no noise filter, no touch.
+// Every persistence is explicit via remember. Hooks only set flags, guard, and nudge.
 
 export function registerHooks(pi: ExtensionAPI) {
-  const encodeAuto = async (cue: string, summary: string, markDirty = true) => {
-    if (!summary) return;
-    const ep: BrainEpisode = { id: `${cue}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue: truncate(cue), summary: truncate(summary), ts: Date.now(), source: "auto", expiresAt: Date.now()+AUTO_TTL_MS };
-    await (pi as any).appendEntry?.("brain:episode", ep); brain.episodes.set(ep.id, ep); indexEpisode(ep); brain.recallMemo.clear();
-    brain.stats.autoEncode++; (pi as any).events?.emit?.("brain:auto-encode", { id: ep.id, cue: ep.cue, source: ep.source, expiresAt: ep.expiresAt, markDirty });
-    if (isVerbose()) try { (pi as any).events?.emit?.("brain:verbose", `auto-encode ${ep.cue}`); } catch {}
-    if (markDirty) { brain.hasWriteEdit = true; brain.hasRemember = false; }
-  };
-  // T09: hippocampal hooks — auto-encode + consolidation (sleep replay) + T2 filter + T11 feedback
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
     if (ctx?.signal?.aborted) return;
+    // clean: edit/write/bash success only sets flags — NO auto episode creation
     if (["edit", "write"].includes(ev?.toolName) && !ev?.isError) {
-      const cue = `${ev.toolName}:${(ev.input?.path ?? "").toString().slice(0, 30)}`;
-      const summary = (ev.content?.[0]?.text ?? ev.result ?? "").toString().slice(0, 200);
-      await encodeAuto(cue, summary);
+      brain.hasWriteEdit = true;
+      brain.hasRemember = false;
     } else if (ev?.toolName === "bash" && !ev?.isError) {
-      const cmd: string = (ev.input?.command ?? "").toString();
-      const output: string = (ev.content?.[0]?.text ?? ev.result ?? "").toString();
-      const isNoise = isNoiseBash(cmd, output);
-      if (/passed|success|fixed|done|ok/i.test(output) && output.length > 20) {
-        const best = [...brain.episodes.values()].filter(e=>e.source==="remember").map(e=>({e,s:scoreBase(e,cmd)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s)[0]?.e;
-        if (best) { best.ts = Date.now(); brain.recallMemo.clear(); brain.stats.touch++; (pi as any).events?.emit?.("brain:touch", { id: best.id, cue: best.cue, cmd: cmd.slice(0,80), reason: "bash success" }); if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:touch ${best.cue} via bash success`, "info"); } catch {} }
-      }
-      if (isPlanDone() && brain.hasRemember) {
-        if (isNoise) { brain.stats.skip++; (pi as any).events?.emit?.("brain:skip", { reason: "noise", cmd: cmd.slice(0,80), outputLen: output.length, gated: "post-plan-done" }); if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:skip noise \`${cmd.slice(0,40)}\``, "info"); } catch {} return; }
-        await encodeAuto(`bash:${cmd.slice(0,30)}`, output.slice(0, 200), false);
-      } else {
-        if (isNoise) { brain.stats.skip++; (pi as any).events?.emit?.("brain:skip", { reason: "noise", cmd: cmd.slice(0,80), outputLen: output.length, gated: "noise" }); if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:skip noise \`${cmd.slice(0,40)}\``, "info"); } catch {} return; }
-        await encodeAuto(`bash:${cmd.slice(0,30)}`, output.slice(0, 200));
-      }
+      // bash is a verification step — do not auto-encode; agent must explicit remember if worth persisting
+      // optional: mark hasWriteEdit if you want bash to require remember — keep separate
+    }
+    if (ev?.toolName === "recall" && !ev?.isError) {
+      brain.hasRecall = true;
+      (pi as any).events?.emit?.("brain:recall", { query: (ev.input?.query ?? ev.input?.queries ?? "").toString().slice(0, 120) });
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
-      // audit preview returns blocked:true but not isError — don't treat as persisted
       const blocked = (ev as any)?.details?.blocked === true || (ev as any)?.result?.blocked === true;
       if (!blocked) {
         brain.hasRemember = true;
@@ -51,12 +28,14 @@ export function registerHooks(pi: ExtensionAPI) {
         brain.rule5Warned = false;
       }
     }
-    // unhappy path: only write/edit/bash failures block retry (narrowed from "any failure")
+    // unhappy path: only write/edit/bash failures block retry
     if (ev?.isError && ["write", "edit", "bash"].includes(ev?.toolName)) {
       brain.needsDebugThink = true;
       brain.needsPlanUpdate = false;
       brain.thinkSatisfied = false;
+      brain.hasRecall = false;
       try { (ctx as any)?.ui?.notify?.("Strict unhappy path: failure detected — call think{goal:'debug <task>', hypotheses:[...]} before retry.", "warning"); } catch {}
+      (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsDebugThink", reason: "failure" });
       const hint = "\n[ brain: failure requires debug think — call think{goal:'debug <task>', hypotheses:[cause,fix]} before retry ]";
       const cur = ev.content?.[0]?.text ?? "";
       return { content: [{ type: "text", text: truncate(cur + hint) }] } as any;
@@ -64,7 +43,7 @@ export function registerHooks(pi: ExtensionAPI) {
   });
 
   pi.on("tool_call" as any, async (ev: any, ctx: any) => {
-    // rm -rf guard first (highest priority) — covers rm -fr / -r -f / --recursive --force
+    // rm -rf guard (kept — safety, not hidden business logic)
     if (ev?.toolName === "bash") {
       const cmd: string = ev?.input?.command ?? "";
       const low = cmd.toLowerCase();
@@ -79,39 +58,47 @@ export function registerHooks(pi: ExtensionAPI) {
         }
       }
     }
-    // unhappy path: block write/edit/bash until debug think + plan update
     if (brain.brainStrict && brain.needsDebugThink && ["write", "edit", "bash"].includes(ev?.toolName)) {
-      brain.stats.block++; (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsDebugThink", reason: "failure requires debug think" });
+      brain.stats.block++;
+      (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsDebugThink", reason: "failure requires debug think" });
       if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} needsDebugThink`, "warning"); } catch {}
       return { block: true, reason: "Blocked by strict unhappy path: failure occurred — call think{goal:'debug <failed Task N>', hypotheses:[root cause, fix]} before retry." } as any;
     }
     if (brain.brainStrict && brain.needsPlanUpdate && ["write", "edit", "bash"].includes(ev?.toolName)) {
-      brain.stats.block++; (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsPlanUpdate", reason: "debug think done — need plan update" });
+      brain.stats.block++;
+      (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsPlanUpdate", reason: "debug think done — need plan update" });
       if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} needsPlanUpdate`, "warning"); } catch {}
       return { block: true, reason: "Blocked by strict unhappy path: debug think done — now update plan{id,done} before retry." } as any;
     }
-    // Rule 2: think-before-act (strict only, enforced)
+    // Rule 1 clean: recall-first — block write/edit until explicit recall in strict mode
+    if (brain.brainStrict && !brain.hasRecall && ["write", "edit"].includes(ev?.toolName)) {
+      brain.stats.block++;
+      (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 1, reason: "recall first" });
+      if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 1 recall first — call recall{query} before write/edit`, "warning"); } catch {}
+      return { block: true, reason: "Blocked by strict workflow Rule 1: call recall{query} first to check prior episodes (explicit, no auto-injection)." } as any;
+    }
+    // Rule 2: think-before-act
     if (brain.brainStrict && (ev?.toolName === "write" || ev?.toolName === "edit")) {
       if (!brain.thinkSatisfied) {
-        brain.stats.block++; (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act" });
+        brain.stats.block++;
+        (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act" });
         if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 2 think first`, "warning"); } catch {}
         return { block: true, reason: "Blocked by strict workflow Rule 2: call think{goal,hypotheses} before write/edit. Deliberate 2-3 approaches first." } as any;
       }
     }
-    // hasRemember now set in tool_result (post-success) — not here
   });
 
-  // Rule 5: encode-or-it-didn't-happen — once after plan done (not per-turn)
+  // Rule 5: encode-or-it-didn't-happen — clean: only nudge, never auto-encode
   pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
     if (brain.brainStrict && brain.hasWriteEdit && !brain.hasRemember && !brain.rule5Warned && isPlanDone()) {
       brain.rule5Warned = true;
-      brain.stats.nudge++; (pi as any).events?.emit?.("brain:nudge", { rule: 5, reason: "hasWriteEdit without remember after plan done" });
+      brain.stats.nudge++;
+      (pi as any).events?.emit?.("brain:nudge", { rule: 5, reason: "hasWriteEdit without remember after plan done" });
       try { ctx?.ui?.notify?.("Strict Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).", "warning"); } catch {}
     } else if (brain.brainStrict && brain.hasWriteEdit && !brain.hasRemember && brain.rule5Warned && isPlanDone()) {
-      // observability: still pending even after first nudge — emit every turn
-      brain.stats.nudge++; (pi as any).events?.emit?.("brain:nudge", { rule: 5, pending: true });
+      brain.stats.nudge++;
+      (pi as any).events?.emit?.("brain:nudge", { rule: 5, pending: true });
       if (isVerbose()) try { ctx?.ui?.notify?.("brain:nudge Rule 5 still pending — call remember", "warning"); } catch {}
     }
   });
-  // before_provider_request deleted — merged into context dedup+trim (one prune, not two)
 }

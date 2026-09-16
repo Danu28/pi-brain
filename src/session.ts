@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // @ts-ignore - tui resolved by pi runtime
 import { Text } from "@earendil-works/pi-tui";
-import { COMPACT_LARGE, COMPACT_SMALL, PRUNE_CAP } from "./knobs";
-import { compressEpisodes, pruneExpired, rebuildIndex, scoreEpisode } from "./scoring";
+import { COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
+import { compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
 import { brain, readMode, renderPlan, resetBrain } from "./state";
 import type { BrainEpisode, BrainPlan } from "./types";
 
@@ -55,10 +55,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       }
       // rebuild incremental index
       rebuildIndex();
-      // T2 prune expired after rebuild
-      pruneExpired(pi);
-      // also prune if over 40
-      if (brain.episodes.size > PRUNE_CAP) pruneExpired(pi);
+      // clean: no auto-prune — expiry/TTL and cap eviction are explicit via pruneExpired() or brain-status
+      // caller must invoke prune manually if needed; session_start does not hide episodes
       // file wins: /pi-brain on stays on across sessions until /pi-brain off
       const fileMode = readMode();
       if (fileMode !== undefined) brain.brainStrict = fileMode;

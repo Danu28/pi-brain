@@ -20,8 +20,9 @@ export const brain = {
   deliberations: [] as Deliberation[],
   // /pi-brain strict gate — branch-durable, defaults off
   brainStrict: false,
-  // strict workflow enforcement (per-agent run)
+  // strict workflow enforcement (per-agent run) — clean: explicit recall/think flags, no hidden auto-encode
   thinkSatisfied: false,
+  hasRecall: false,
   hasWriteEdit: false,
   hasRemember: false,
   rule5Warned: false,
@@ -55,6 +56,7 @@ export function resetBrain() {
   brain.deliberations.length = 0;
   brain.brainStrict = false;
   brain.thinkSatisfied = false;
+  brain.hasRecall = false;
   brain.hasWriteEdit = false;
   brain.hasRemember = false;
   brain.rule5Warned = false;
