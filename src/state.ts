@@ -1,4 +1,10 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
+export const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
+export function readMode(): boolean | undefined { try { const v = JSON.parse(readFileSync(MODE_FILE, "utf8")); return typeof v?.enabled === "boolean" ? v.enabled : undefined; } catch { return undefined; } }
+export function writeMode(enabled: boolean) { try { mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ enabled, ts: Date.now() }), "utf8"); } catch {} }
 
 // Module-singleton brain state. pi loads an extension once per process, so a
 // module singleton (plus resetBrain() on session_start) preserves the original

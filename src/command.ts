@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { brain } from "./state";
-import { writeMode } from "./storage";
+import { brain, writeMode } from "./state";
 
 export function registerCommand(pi: ExtensionAPI) {
   // /pi-brain command — strict gate: on = brain-only, off = default pi

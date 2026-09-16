@@ -4,6 +4,12 @@ import { compressEpisodes, pruneExpired, scoreEpisode } from "./scoring";
 import { brain, latestPlan, renderPlan } from "./state";
 import type { BrainEpisode } from "./types";
 
+function rankedEpisodes(query: string, n: number): BrainEpisode[] {
+  const all = [...brain.episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now());
+  const scored = all.map(e=>({e,s:scoreEpisode(e,query)})).filter(x=>x.s>0 || query.trim()==="").sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,n).map(x=>x.e);
+  return scored.length ? scored : all.sort((a,b)=>b.ts-a.ts).slice(0,n);
+}
+function budgetTrim<T>(list: T[], pct: number|undefined): T[] { if(pct===undefined) return list; if(pct>BUDGET_STOP_PCT) return []; if(pct>BUDGET_WARN_PCT) return list.slice(0,1); return list; }
 // T6 stable prefix for KV-cache — literal only, never interpolate; delta goes in message
 const STRICT_STABLE_PREFIX = `[STRICT BRAIN MODE ON — 7 RULES ENFORCED]\nHappy (2-call floor): recall (top-3) → think (smart reads) → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash verify parallel → plan #2 done:[all] → remember → habit → git commit (bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>')\nUnhappy (3-call floor): same but 3 plan calls — plan #1 → failure → think{goal:"debug <failed Task N>", hypotheses:[root cause, fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember → habit → git commit. Execution blocked until debug-think done.\nBatch: 1 LLM call = N tool calls. Turn1: read×N parallel; Turn2: edit×N+write×N+bash parallel. Chunk edits: 1 edit per file, exact oldText, merge nearby changes. If oldText known → skip reads → 1 call. Record → 0-call replay. Prefer plan{hypotheses} single-shot (think+plan 2→1). 5-Step: Question→Delete→Simplify→Accelerate→Automate.\n\n1. Recall-first: picks top-3 relevant (TF-IDF 2x/1x/0.5x + tag boost 1.5 + decay 0.5/7d). If recall empty/no relevant → scan current dir: bash ls + read relevant files smart (only relevant) to find context (don't read a lot). Cite cue(s) when episodes exist.\n2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).\n3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.\n4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.\n5. Shortest-diff + Batch: Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, 1 edit per file with exact oldText, no scaffolding for later. Bash verify after edits land (not same call as edit it checks).\n6. Encode: after every successful write/edit/bash you MUST call remember{cue,summary}; 2nd repeat of same fix → habit{name,when,steps}.\n7. Git: when plan 2/2 done + remember done, bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>' (skip if no changes).\n\nPi Tools — use exactly as defined:\n- read {path, offset?, limit?} — read text/image, truncated 50KB/2000 lines; large files via offset/limit\n- write {path, content} — create/overwrite, auto-creates parent dirs\n- edit {path, edits:[{oldText,newText}]} — exact unique oldText, non-overlapping, merge nearby changes, one file per call\n- bash {command, timeout?} — shell exec, use for ls/find/grep/cat/head/verify/git, truncated 50KB\n- custom tools: any pi.registerTool {name, parameters} — call by name with matching params object (discover via recall/skill list)\n`;
 
@@ -23,20 +29,8 @@ export function registerInjection(pi: ExtensionAPI) {
     // strict mode: scored recall + stable prefix (T6) + gist (T3) + budget (T10)
     if (brain.brainStrict) {
       const query: string = ev?.prompt ?? "";
-      const all = [...brain.episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now());
-      const scored = all
-        .map((e) => ({ e, s: scoreEpisode(e, query) }))
-        .filter((x) => x.s > 0 || query.trim() === "")
-        .sort((a, b) => b.s - a.s || b.e.ts - a.e.ts)
-        .slice(0, 3)
-        .map((x) => x.e);
-      const ranked = scored.length ? scored : all.sort((a, b) => b.ts - a.ts).slice(0, 3);
-      // T10 budget guard: shrink delta if overloaded
-      let deltaRanked = ranked;
-      if (pct !== undefined) {
-        if (pct > BUDGET_STOP_PCT) deltaRanked = [];
-        else if (pct > BUDGET_WARN_PCT) deltaRanked = ranked.slice(0,1);
-      }
+      const ranked = rankedEpisodes(query, 3);
+      const deltaRanked = budgetTrim(ranked, pct);
       const context = deltaRanked.length
         ? compressEpisodes(deltaRanked)
         : "(no relevant episodes — scan current dir: bash ls + read relevant files smart (only relevant) to find context)";
@@ -52,19 +46,8 @@ export function registerInjection(pi: ExtensionAPI) {
     // default mode: gated light injection — 1 episode gist + 1 deliberation (T3+T8) + budget
     const planDef = latestPlan();
     // pick scored top-1 for default (T8) not just recency
-    let recent: BrainEpisode[] = [];
-    if (brain.episodes.size) {
-      const q = (ev?.prompt ?? "") as string;
-      if (q.trim()) {
-        const all = [...brain.episodes.values()].filter(e=> !e.expiresAt || e.expiresAt > Date.now());
-        const scored = all.map(e=>({e,s:scoreEpisode(e,q)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,1).map(x=>x.e);
-        recent = scored.length ? scored : [...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,1);
-      } else {
-        recent = [...brain.episodes.values()].sort((a, b) => b.ts - a.ts).slice(0, 1);
-      }
-    }
-    // budget guard: if overloaded skip inject
-    if (pct !== undefined && pct > BUDGET_STOP_PCT) recent = [];
+    const q = (ev?.prompt ?? "") as string;
+    let recent: BrainEpisode[] = brain.episodes.size ? budgetTrim(q.trim() ? rankedEpisodes(q, 1) : [...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,1), pct) : [];
     const recentThink = brain.deliberations.slice(-1);
     if (!recent.length && !recentThink.length && !planDef) return;
     const parts: string[] = [];

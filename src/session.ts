@@ -3,10 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { COMPACT_LARGE, COMPACT_SMALL, PRUNE_CAP } from "./knobs";
 import { compressEpisodes, pruneExpired, rebuildIndex, scoreEpisode } from "./scoring";
-import { brain, resetBrain } from "./state";
-import { readMode } from "./storage";
+import { brain, readMode, renderPlan, resetBrain } from "./state";
 import type { BrainEpisode, BrainPlan } from "./types";
-import { renderPlan } from "./state";
 
 export function registerSessionHandlers(pi: ExtensionAPI) {
   // TUI renderer for brain:episode — collapsed cue, expanded detail (not in LLM context)

@@ -1,9 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_TTL_MS } from "./knobs";
-import { indexEpisode, scoreBase } from "./scoring";
+import { indexEpisode, scoreBase, truncate } from "./scoring";
 import { brain, isPlanDone } from "./state";
 import type { BrainEpisode } from "./types";
-import { isNoiseBash, truncate } from "./util";
+function isNoiseBash(cmd: string, output: string): boolean {
+  const c = cmd.trim().toLowerCase(); if (!c) return true;
+  if (/^\s*(ls|cat|head|tail|grep|find|echo|pwd|which|whoami|env|printenv)\b/.test(c)) return output.length < 200;
+  if (/^\s*git\s+(status|diff\s*--stat|log\s*--oneline)/.test(c) && output.length < 200) return true;
+  if (output.length < 30) return false; return false;
+}
 
 export function registerHooks(pi: ExtensionAPI) {
   const encodeAuto = async (cue: string, summary: string, markDirty = true) => {

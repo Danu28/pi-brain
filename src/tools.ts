@@ -1,10 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
-import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, gistForEpisode, indexEpisode, normalizeTags, parseSince, planTaskError, scoreBase, scoreEpisode, tokenize, unindexEpisode } from "./scoring";
+import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, gistForEpisode, indexEpisode, normalizeTags, parseSince, planTaskError, scoreBase, scoreEpisode, tokenize, truncate, unindexEpisode } from "./scoring";
 import { brain, renderPlan } from "./state";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
-import { truncate } from "./util";
 
 // consolidated 7 tools — was 8 files (432 lines) → 1 file (~360 lines)
 export function registerTools(pi: ExtensionAPI) {

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, PRUNE_CAP, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, PRUNE_CAP, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
 import { brain } from "./state";
 import type { BrainEpisode } from "./types";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -34,6 +34,17 @@ const SYN: Record<string, string[]> = {
 function loadSyn(p:string){ try{ Object.assign(SYN, JSON.parse(readFileSync(p,"utf8"))); }catch{} }
 loadSyn(join(process.cwd(),"pi-brain.syn.json"));
 loadSyn(join(homedir(),".pi","agent","pi-brain.syn.json"));
+export function truncate(text: string): string {
+  if (!text) return text;
+  const lines = text.split("\n");
+  if (lines.length > MAX_LINES) text = lines.slice(0, MAX_LINES).join("\n") + `\n[truncated ${lines.length - MAX_LINES} lines]`;
+  const byteLen = typeof Buffer !== "undefined" ? Buffer.byteLength(text, "utf8") : new TextEncoder().encode(text).length;
+  if (byteLen > MAX_BYTES) {
+    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "") + "\n[truncated to 50KB]";
+    else text = text.slice(0, MAX_BYTES) + "\n[truncated to 50KB]";
+  }
+  return text;
+}
 
 export function expandTokens(toks: string[]): string[] {
   const out = new Set<string>();
