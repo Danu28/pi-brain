@@ -183,12 +183,9 @@ export function registerTools(pi: ExtensionAPI) {
         winner = sorted[0].side;
         rubric = { a: kept[0].rubric, b: kept[1].rubric };
         debaters = kept.map(k=>({ side:k.side, argues:k.argues, relevance:k.rel.score, uses:k.uses }));
-        // Auto-prune: loser side episodes get faster decay — emit event for observability
+        // Auto-prune: loser side — emit event for observability (no hidden pin mutation — clean: winner pinned via links, not silent relevance bump)
         const loser = sorted[1];
         if (loser.uses.length) (pi as any).events?.emit?.("brain:prune", { reason:"debate loser", loser: loser.side, epIds: loser.uses });
-        // Pin winner side — boost relevance
-        const winnerUses = sorted[0].uses;
-        for (const id of winnerUses) { const ep=brain.episodes.get(id); if(ep) ep.relevance = Math.min(10, (ep.relevance ?? 5) + 0.5); }
       }
       const links = [...new Set([...goalPool, ...kept.flatMap(k=>k.uses)])].slice(0,4);
       const id = `think:${Date.now()}:${Math.random().toString(36).slice(2,6)}`;
@@ -202,7 +199,9 @@ export function registerTools(pi: ExtensionAPI) {
       await (pi as any).appendEntry?.("brain:deliberation", entry); brain.thinkSatisfied=true; brain.needsDebugThink=false; if(wasDebug) brain.needsPlanUpdate=true;
       (pi as any).events?.emit?.("brain:deliberation", entry);
       if (debaters) (pi as any).events?.emit?.("brain:debate", { id, goal: entry.goal, debaters, winner, rubric, links, parentId });
-      const debateBlock = debaters ? `\nDebate:\n` + debaters.map((d:any, i:number)=>` ${i===0?"A":"B"}: ${d.side} — ${formatRelevance(d.relevance)} cost:${rubric[i===0?"a":"b"].cost} risk:${rubric[i===0?"a":"b"].risk} rev:${rubric[i===0?"a":"b"].reversibility} avg:${rubric[i===0?"a":"b"].avg} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nJudge: ${winner} wins` + (links.length?` — links:[${links.join(",")}]`:"") + (parentId?` — parent:${parentId}`:"") : "";
+      const hasExplicitRubric = kept.some(k=> /cost\s*:/i.test(k.raw) || /risk\s*:/i.test(k.raw));
+      const rubricNote = !hasExplicitRubric ? " (rubric defaulted — add cost:/risk:/rev: for better judge)" : "";
+      const debateBlock = debaters ? `\nDebate:\n` + debaters.map((d:any, i:number)=>` ${i===0?"A":"B"}: ${d.side} — ${formatRelevance(d.relevance)} cost:${rubric[i===0?"a":"b"].cost} risk:${rubric[i===0?"a":"b"].risk} rev:${rubric[i===0?"a":"b"].reversibility} avg:${rubric[i===0?"a":"b"].avg} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nJudge: ${winner} wins${rubricNote}` + (links.length?` — links:[${links.join(",")}]`:"") + (parentId?` — parent:${parentId}`:"") : "";
       const keptNote = kept.length < parsed.length ? `\n[QDS Delete: ${parsed.length - kept.length} low-relevance hypothesis hidden <4/10]` : "";
       return {content:[{type:"text",text:truncate(`Deliberation ${id}${parentId?` (parent ${parentId})`:""}: ${params.goal}\n- ${hypotheses.join("\n- ")}${entry.conclusion?`\n=> ${entry.conclusion}`:""}${debateBlock}${keptNote}`)}],details:{deliberation:entry, debate: debaters?{debaters, winner, rubric, links, parentId}: undefined}};
     },
@@ -295,8 +294,8 @@ export function registerTools(pi: ExtensionAPI) {
       if(latestThink?.winner) {
         debateId = latestThink.id;
         links = [...(latestThink.links||[])];
-        const winnerLower = latestThink.winner.toLowerCase();
-        const hasWinnerTask = kept.some(t=> t.parsed.title.toLowerCase().includes(winnerLower.slice(0,4)) || t.raw.toLowerCase().includes("lazy") || t.raw.toLowerCase().includes("eager"));
+        const winnerTokens = new Set(tokenize(latestThink.winner));
+        const hasWinnerTask = kept.some(t=> { const tToks = new Set(tokenize(t.parsed.title)); for(const wt of winnerTokens) if(tToks.has(wt)) return true; return false; });
         if(!hasWinnerTask && latestThink.winner) debateNote = `\n[Debate-linked: think ${latestThink.id} winner "${latestThink.winner}" — tasks should reflect winner; no task mentions winner]`;
         // also pull candidate episodes for goal
         const goalPool = candidatePool(params.goal!).slice(0,2).map(e=>e.id);
