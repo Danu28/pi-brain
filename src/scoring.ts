@@ -109,14 +109,16 @@ export function unindexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) 
 export function rebuildIndex(){ brain.tokenIndex.clear(); for(const e of brain.episodes.values()) indexEpisode(e); }
 export function pruneExpired(pi: ExtensionAPI): number {
   const now=Date.now(); let n=0;
-  for(const [id,e] of brain.episodes) if(e.expiresAt&&e.expiresAt<now){ unindexEpisode(e); brain.episodes.delete(id); n++; }
+  const evicted: string[] = [];
+  for(const [id,e] of brain.episodes) if(e.expiresAt&&e.expiresAt<now){ unindexEpisode(e); brain.episodes.delete(id); n++; evicted.push(id); }
   if(n) brain.recallMemo.clear();
   while(brain.episodes.size>PRUNE_CAP){
     const sorted=[...brain.episodes.values()].sort((a,b)=>a.ts-b.ts);
     const oldest=sorted.find(e=>e.source==="auto")??sorted[0]; if(!oldest) break;
     if(oldest.source!=="auto") (pi as any).events?.emit?.("brain:overload",{evictRemember:oldest.cue,size:brain.episodes.size});
-    unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; brain.recallMemo.clear();
+    unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; evicted.push(oldest.id); brain.recallMemo.clear();
   }
+  if (n) (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5) });
   return n;
 }
 export function candidatePool(query: string): BrainEpisode[] {

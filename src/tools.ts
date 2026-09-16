@@ -38,6 +38,7 @@ export function registerTools(pi: ExtensionAPI) {
       const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=5).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,3);
       if (scored.length && !params.force && !exact) {
         const preview=scored.map(x=>`[${x.e.cue}] ${x.e.summary} (score:${x.s.toFixed(1)})`).join("\n");
+        (pi as any).events?.emit?.("brain:remember-audit", { audit: "similar-found", similar: scored.map(x=>({cue:x.e.cue, score:x.s})), blocked: true });
         return { content: [{ type: "text", text: `Audit: ${scored.length} similar episode(s) found — not encoded.\n${preview}\n→ To update existing, reuse its cue. To force new, call remember again with force:true` }], details: { audit:"similar-found", similar:scored.map(x=>({episode:x.e,score:x.s})), blocked:true } } as any;
       }
       const ep: BrainEpisode={ id:`${params.cue.replace(/[^a-z0-9-]/gi,"-").slice(0,30)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue:truncate(params.cue), summary:truncate(params.summary), detail:params.detail?truncate(params.detail):undefined, tags, refs, ts:Date.now(), source:"remember" };
@@ -62,7 +63,7 @@ export function registerTools(pi: ExtensionAPI) {
       const limit=params.limit??5, queries:string[]=params.queries?.length?params.queries:[params.query??""];
       const normTags=normalizeTags(params.tags as any), memoKey=`${queries.join("\x00")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`;
       const cached=brain.recallMemo.get(memoKey);
-      if(cached&&Date.now()-cached.ts<RECALL_MEMO_MS){ brain.memoHits++; brain.recallMemo.delete(memoKey); brain.recallMemo.set(memoKey,cached); if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any; return {content:[{type:"text",text:truncate(cached.text)}],details:{episodes:cached.ranked,cached:true}}; }
+      if(cached&&Date.now()-cached.ts<RECALL_MEMO_MS){ brain.memoHits++; brain.recallMemo.delete(memoKey); brain.recallMemo.set(memoKey,cached); (pi as any).events?.emit?.("brain:recall-cache", { memoKey: memoKey.slice(0,120), hits: brain.memoHits, age: Date.now()-cached.ts, cached: true }); if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any; return {content:[{type:"text",text:truncate(cached.text)}],details:{episodes:cached.ranked,cached:true}}; }
       const filterTags=normTags, sinceTs=parseSince(params.since as any);
       let candidates: BrainEpisode[]=[...brain.episodes.values()];
       const allQToks=[...new Set(queries.flatMap(q=>expandTokens(tokenize(q))))];
@@ -140,6 +141,7 @@ export function registerTools(pi: ExtensionAPI) {
         if(params.hypotheses.some((h:string)=>h.trim().length<10)) return {content:[{type:"text",text:"plan hypotheses must be detailed (≥10 chars each)"}],details:{error:"hypotheses not detailed"}} as any;
         const entry: Deliberation={ goal:params.goal??"plan deliberation", hypotheses:params.hypotheses.map((h:string)=>truncate(h)), ts:Date.now() };
         brain.deliberations.push(entry); if(brain.deliberations.length>10) brain.deliberations.shift(); await (pi as any).appendEntry?.("brain:deliberation", entry); brain.thinkSatisfied=true; brain.needsDebugThink=false; if(entry.goal.toLowerCase().trim().startsWith("debug")) brain.needsPlanUpdate=true;
+        (pi as any).events?.emit?.("brain:deliberation", entry); (pi as any).events?.emit?.("brain:plan-think-single-shot", { goal: entry.goal, hypotheses: entry.hypotheses });
       }
       if(!params.goal||!params.tasks?.length) return {content:[{type:"text",text:"plan: goal and tasks required for new plan (use id+done to update)"}],details:{error:"missing goal/tasks"}} as any;
       const taskErr=planTaskError(params.tasks); if(taskErr) return {content:[{type:"text",text:taskErr}],details:{error:"invalid tasks",count:params.tasks.length}} as any;
