@@ -4,6 +4,31 @@ All notable changes to pi-brain follow [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-09-17
+
+### Added
+- **Knobs/SYN externalized** — `pi-brain.knobs.json` + `pi-brain.syn.json` file-only overrides (cwd + `$PI_CODING_AGENT_DIR`), logged via `brain-status verbose:true` (`src/knobs.ts`, `src/scoring.ts`)
+- **Habit-due signal** — 2nd similar `remember` → `brain:habit-due` event + `[Habit due]` hint (`src/tools.ts`)
+- **Recall transparency** — top-2 `[Score breakdown: base × half-life × boost]` (`src/scoring.ts`, `src/tools.ts`)
+- **Commit hint** — `plan` returns copy-paste `bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit` when done/all (`src/tools.ts`, `src/session.ts` stores `lastCompactionKept`)
+
+### Changed
+- **SKILL.md slim** — 10.6k → 3.3k, one workflow table + tips, links to `docs/architecture.html` (`skills/pi-brain/SKILL.md`)
+- **brain-status collapsed** — default 6 lines; `verbose:true` / `PI_BRAIN_VERBOSE=1` adds gist/knobs/budget/compaction (`src/tools.ts`)
+- **DAG UX** — `renderPlan` shows `→ waits: T2` + `[blocked]` tags; blocked msg includes waiter titles + `plan{id,done:[x]} first` fix (`src/state.ts`, `src/tools.ts`)
+- **Debate parser** — single-pass `RUBRIC_RE` for `cost:/risk:/rev:` any order/pipe (`src/scoring.ts`)
+- **Scoring** — `tokenizeCached` LRU, `candidatePool` index-miss fast-path `[]` when `>10` episodes, `scoreBreakdown()` helper, `truncate()` single-surface in `knobs.ts` (`src/knobs.ts`, `src/scoring.ts`)
+
+### Fixed
+- **Async sidecar** — `saveMemory()` via `withFileMutationQueue` chain, `saveChain` coalescing — burst 10 remembers safe (`src/state.ts`, `src/tools.ts`, `src/session.ts`)
+- **Documentation drift** — `docs/architecture.html` now post-delete reality (no auto-encode, static `[brain:mode]` note, no `before_provider_request`/`resources_discover`, sidecar+branch file-wins) (`docs/architecture.html`)
+- **Development layout** — `docs/development.md` now lists real `src/*.ts` + `pi-brain.knobs/syn.json` (`docs/development.md`)
+- **Memo coherence** — `brain.memoGen` + `gen` in `recallMemo` — memo invalidated on `index/unindex/rebuild`; `pruneExpired` clears correctly (`src/state.ts`, `src/scoring.ts`)
+- **Cleanup** — removed `totalRisk` var, deduped `brain:debate` duplicate emit (`src/tools.ts`)
+
+### Deleted
+- Legacy `brainStrict`/`needsPlanUpdate` read paths unified via `getBrainMode()` (compat shim retained in `src/state.ts`/`src/command.ts` for test transition); `budgetTrim`/`BUDGET` trim table removed (static note is KV-stable)
+
 ### Fixed
 
 - **Memory survive restart/fork/compact** — session rebuild now reads pi's real custom-entry shape (`type:"custom"` + `customType` + `data`) instead of the nonexistent `type:"entry"/entryType` fields, so episodes/plans/mode were silently wiped on every `/resume`, `/fork` or `/reload`. (`src/session.ts`)
