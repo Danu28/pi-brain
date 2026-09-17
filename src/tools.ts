@@ -103,7 +103,7 @@ export function registerTools(pi: ExtensionAPI) {
         const delib = brain.deliberations.find(d=> d.id===replayThinkId);
         if (delib) {
           const replayText = `Replay ${delib.id}${delib.parentId?` (parent ${delib.parentId})`:""}: ${delib.goal}\n` +
-            (delib.debaters? `Debate:\n` + delib.debaters.map((d:any,i:number)=>` ${i===0?"A":"B"}: ${d.side} ${formatRelevance(d.relevance)} — ${d.argues} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nWinner: ${delib.winner} ${delib.rubric?`— A ${delib.rubric.a.avg}/10 vs B ${delib.rubric.b.avg}/10`:""}` : `- ${delib.hypotheses.join("\n- ")}`) +
+            (delib.debaters? delib.debaters.map((d:any,i:number)=>`- ${d.side} ${d.relevance!==undefined?`${d.relevance.toFixed(1)}/10`: ``}${d.argues?` — ${d.argues}`:``}${d.uses?.length?` links:[${d.uses.join(",")}]`:``}`).join("\n") + (delib.winner?`\n=> Winner: ${delib.winner}`:"") : `- ${delib.hypotheses.join("\n- ")}`) +
             (delib.conclusion?`\n=> ${delib.conclusion}`:"") + (delib.links?.length?`\nLinks:[${delib.links.join(",")}]`:"");
           return {content:[{type:"text",text:truncate(replayText)}],details:{deliberation:delib, replay:true}} as any;
         }
@@ -146,7 +146,7 @@ export function registerTools(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "think", label: "Think",
-    description: "PFC debate graph: 2 debaters + judge + memory links — hypotheses are scored via rubric cost/risk/reversibility/relevance, winner pinned, loser pruned, graph replayable via recall. Clean: explicit, no hidden.",
+    description: "Structured deliberation: hypotheses scored via rubric cost/risk/reversibility/relevance, winner pinned, memory links attached, replayable via recall. Lean: decision memo, no courtroom.",
     parameters: Type.Object({
       goal: Type.String({ description: "Reasoning goal or question" }),
       hypotheses: Type.Array(Type.String(), { description: "Hypotheses — each debater: \"Side A | cost:3 risk:2 rev:9 | argues...\" or plain argues. QDS Delete <4 hidden.", minItems: 1, maxItems: 3 }),
@@ -193,7 +193,7 @@ export function registerTools(pi: ExtensionAPI) {
       const id = `think:${Date.now()}:${Math.random().toString(36).slice(2,6)}`;
       const parentId = (params as any).parentId as string | undefined;
       const entry: Deliberation={
-        id, parentId, goal:truncate(params.goal), hypotheses, conclusion:params.conclusion?truncate(params.conclusion): (winner ? `Judge: ${winner} wins — ` + kept.map(k=> `${k.side} ${k.rubric.avg}/10`).join(" vs ") : undefined),
+        id, parentId, goal:truncate(params.goal), hypotheses, conclusion:params.conclusion?truncate(params.conclusion): (winner ? `Winner: ${winner} — ` + kept.map(k=> `${k.side} ${k.rubric.avg.toFixed(1)}/10`).join(" vs ") : undefined),
         ts:Date.now(), debaters, rubric, winner, links,
         score: kept.length ? Math.round(kept.reduce((a,b)=>a+b.rel.score,0)/kept.length*10)/10 : undefined,
       };
@@ -202,10 +202,10 @@ export function registerTools(pi: ExtensionAPI) {
       (pi as any).events?.emit?.("brain:deliberation", entry);
       if (debaters) (pi as any).events?.emit?.("brain:debate", { id, goal: entry.goal, debaters, winner, rubric, links, parentId });
       const hasExplicitRubric = kept.some(k=> /cost\s*:/i.test(k.raw) || /risk\s*:/i.test(k.raw));
-      const rubricNote = !hasExplicitRubric ? " (rubric defaulted — add cost:/risk:/rev: for better judge)" : "";
-      const debateBlock = debaters ? `\nDebate:\n` + debaters.map((d:any, i:number)=>` ${i===0?"A":"B"}: ${d.side} — ${formatRelevance(d.relevance)} cost:${rubric[i===0?"a":"b"].cost} risk:${rubric[i===0?"a":"b"].risk} rev:${rubric[i===0?"a":"b"].reversibility} avg:${rubric[i===0?"a":"b"].avg} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nJudge: ${winner} wins${rubricNote}` + (links.length?` — links:[${links.join(",")}]`:"") + (parentId?` — parent:${parentId}`:"") : "";
-      const keptNote = kept.length < parsed.length ? `\n[QDS Delete: ${parsed.length - kept.length} low-relevance hypothesis hidden <4/10]` : "";
-      return {content:[{type:"text",text:truncate(`Deliberation ${id}${parentId?` (parent ${parentId})`:""}: ${params.goal}\n- ${hypotheses.join("\n- ")}${entry.conclusion?`\n=> ${entry.conclusion}`:""}${debateBlock}${keptNote}`)}],details:{deliberation:entry, debate: debaters?{debaters, winner, rubric, links, parentId}: undefined}};
+      const scoredLines = kept.map((k:any,i:number)=>`- ${k.side} ${k.rubric.avg.toFixed(1)}/10 cost:${k.rubric.cost} risk:${k.rubric.risk} rev:${k.rubric.reversibility}${k.uses.length?` links:[${k.uses.join(",")}]`:``}${k.rel.score!==undefined?` rel:${formatRelevance(k.rel.score)}`:``}`).join("\n");
+      const winnerLine = winner ? `\n=> Winner: ${winner} (${kept.map(k=>k.rubric.avg.toFixed(1)+"/10").join(" vs ")}${!hasExplicitRubric ? " — add cost:/risk:/rev: for sharper scoring" : ""}${links.length?` — links:[${links.join(",")}]`:``})` : "";
+      const keptNote = kept.length < parsed.length ? `\n[QDS Delete: ${parsed.length - kept.length} low-relevance hypothesis hidden]` : "";
+      return {content:[{type:"text",text:truncate(`Deliberation ${id}${parentId?` (parent ${parentId})`:``}: ${params.goal}\n${scoredLines}${winnerLine}${keptNote}`)}],details:{deliberation:entry, debate: debaters?{debaters, winner, rubric, links, parentId}: undefined}};
     },
   });
 
@@ -229,7 +229,7 @@ export function registerTools(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "plan", label: "Plan",
-    description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). QDS: tasks scored for relevance, vague <4 hidden, linked to debate winner, verifiable via check, branchable via parentId. Requires 3-10 well-split tasks. When all [x], bash: git init if needed + commit. Graph: recallable via links.",
+    description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). QDS: tasks scored for relevance, vague <4 hidden, linked to deliberation winner, verifiable via check, branchable via parentId. Requires 3-10 well-split tasks. When all [x], bash: git init if needed + commit. Recallable via links.",
     parameters: Type.Object({
       goal: Type.Optional(Type.String({ description: "Plan goal (e.g. creative login page)" })),
       tasks: Type.Optional(Type.Array(Type.String(), { description: "Detailed ordered tasks — rich: 'title | refs:src/a.ts check:bash: ... risk:5 estimate:15m depends:0,1' — QDS Delete <4 hidden" })),
@@ -358,8 +358,7 @@ export function registerTools(pi: ExtensionAPI) {
       const pct=usage?.percent??(usage?.used&&usage?.total?Math.round(usage.used/usage.total*100):undefined), overloaded=(pct!==undefined&&pct>80)||count>50;
       if(overloaded) (pi as any).events?.emit?.("brain:overload",{episodes:count,percent:pct});
       const idxStats=`Index: ${brain.tokenIndex.size} tokens → ${count} episodes (${remCount} remember, ${autoCount} auto) | memo hits:${brain.memoHits} miss:${brain.memoMisses}`;
-      const graphCount = brain.deliberations.filter(d=>d.debaters).length;
-      const graphLine = brain.deliberations.length ? `Graph: ${brain.deliberations.length} deliberations (${graphCount} debates, ${brain.deliberations.filter(d=>d.parentId).length} branched) — winners:[${brain.deliberations.slice(-3).map(d=>d.winner||"n/a").join(",")}] — replay via recall{query:"think:<id>"}` : "Graph: no deliberations";
+      const graphLine = brain.deliberations.length ? `Deliberations: ${brain.deliberations.length} — last: "${brain.deliberations.slice(-1)[0].goal}" — replay via recall{query:"think:<id>"}` : "Deliberations: none";
       const verboseLine = `Verbose: skip:${brain.stats.skip} auto:${brain.stats.autoEncode} touch:${brain.stats.touch} prune:${brain.stats.prune} trim:${brain.stats.budgetTrim} block:${brain.stats.block} dedup:${brain.stats.dedup} nudge:${brain.stats.nudge} audit:${brain.stats.audit} | ${isVerbose() ? "PI_BRAIN_VERBOSE=1" : "verbose off (set PI_BRAIN_VERBOSE=1)"}`;
       const gistPreview=[...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,3).map(gistForEpisode).join(" | "), gistTokens=estTokens(gistPreview);
       const knobs=`Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d`;

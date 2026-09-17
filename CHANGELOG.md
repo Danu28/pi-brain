@@ -2,14 +2,33 @@
 
 All notable changes to pi-brain follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [2.0.0-lean] — experiment branch `steve-jobs-version` (unreleased, not on main)
 
-### Fixed
+A product cut, not a feature release: "silent when it works, a tutor only when you fail twice, memory always."
 
-- **Strict gate timing** — `plan` is now gated on `think` (Rule 2 fires at the earliest pre-edit tool, not on the write/edit batch), so skipping `think` costs one small blocked `plan` instead of a full blocked edit batch + re-emission. (`src/hooks.ts`)
-- **Batch-aware preflight** — pending sibling `think`/`plan` calls in the same assistant message count as satisfying the gate (pi preflights all siblings before any executes), so a compliant batched model is never blocked and never re-emits edits. (`src/hooks.ts`)
-- **Terse duplicate block hints** — siblings blocked by the same rule in one batch get a 1-line reason; the first block carries the full explanation (cuts block noise on multi-tool batches). (`src/hooks.ts`)
-- Guided mode nudges on `plan` too (same earlier-steering benefit, no blocks). (`src/hooks.ts`)
+### Removed (the ceremony)
+
+- **Happy-path gates** — `plan` is no longer gated on `think`; `write`/`edit` no longer require `think`+`plan`.
+  Mandatory think/plan before edits was the tax: an agent that reasons correctly now never gets blocked,
+  never re-emits a rejected batch.
+- **Guided mode** — modes collapsed to one guarded mode `on`; legacy `strict`/`guided` map to it on read
+  (`/pi-brain strict|guided` are accepted aliases for `on`).
+- **Think courtroom** — debate-block output, `Judge:` narrative and the graph dashboard line are gone.
+  `think` returns a decision memo (rubric engine, `details.debate`, memory links and replay preserved).
+- **Batch-aware preflight + strict-gate machinery** in `hooks.ts` — deleted along with the gates they served.
+
+### Kept (the product)
+
+- `remember` / `recall` / `think` / `creative-thinking` / `plan` / `habit` / `brain-status` — behavior unchanged.
+- **Tutor gate** — 2 consecutive `write`/`edit`/`bash` failures still block until
+  `think{goal:'debug <task>', hypotheses:[cause, fix]}`; any success or a debug `think` clears it.
+- `rm -rf` UI confirm; one-time `remember` nudge after edits + plan done; static `[brain:on]` flow note (KV-cache friendly).
+
+### Updated
+
+- SKILL.md rewritten as a ~70-line manual; `docs/audit-observability.md` superseded by an honest
+  "what it does / deliberately does NOT do" page; README, inject note and tests aligned to the new
+  contract — tests now assert `edit`/`write`/`plan` are NOT blocked without `think`/`plan`.
 
 ## [1.0.0] — 2026-09-14
 
@@ -38,12 +57,3 @@ First publishable pi package release.
 - Install is now git-only — npm distribution removed. `release.yml` deleted; `pack` + `prepublishOnly` scripts dropped.
 - `ci.yml` guards `main` and `release/*` (was `master`/`main`).
 - README + dev docs rewritten for `pi install git:...` flows (`@v1.0.0` pin or latest).
-
-### Install
-
-```bash
-pi install git:github.com/Danu28/pi-brain@v1.0.0   # pinned release
-pi install git:github.com/Danu28/pi-brain          # latest
-```
-
-Previous installers (`install.bat`/`install.sh`) now live in `scripts/` for air-gapped copy installs.

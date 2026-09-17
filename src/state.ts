@@ -3,10 +3,17 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
 export const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain.json");
-export type BrainMode = "strict" | "guided" | "off";
-export function readMode(): BrainMode | undefined { try { const v = JSON.parse(readFileSync(MODE_FILE, "utf8")); if (typeof v?.mode === "string" && ["strict","guided","off"].includes(v.mode)) return v.mode as BrainMode; if (typeof v?.enabled === "boolean") return v.enabled ? "strict" : "off"; return undefined; } catch { return undefined; } }
-export function writeMode(mode: BrainMode | boolean) { try { const m: BrainMode = typeof mode === "boolean" ? (mode ? "strict" : "off") : mode; mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ mode: m, enabled: m === "strict", ts: Date.now() }), "utf8"); } catch {} }
-export function getBrainMode(): BrainMode { return (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off"); }
+export type BrainMode = "on" | "off";
+// Legacy "strict"/"guided" merged into the single guarded mode "on"; booleans map too.
+export function normalizeMode(m: any): BrainMode | undefined {
+  if (m === "on" || m === "off") return m;
+  if (m === "strict" || m === "guided") return "on";
+  if (typeof m === "boolean") return m ? "on" : "off";
+  return undefined;
+}
+export function readMode(): BrainMode | undefined { try { const v = JSON.parse(readFileSync(MODE_FILE, "utf8")); return normalizeMode(v?.mode ?? v?.enabled); } catch { return undefined; } }
+export function writeMode(mode: BrainMode | boolean) { try { const m: BrainMode = normalizeMode(typeof mode === "boolean" ? (mode ? "on" : "off") : mode) ?? "off"; mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ mode: m, enabled: m === "on", ts: Date.now() }), "utf8"); } catch {} }
+export function getBrainMode(): BrainMode { return normalizeMode((brain as any).brainMode) ?? "off"; }
 
 // Module-singleton brain state. pi loads an extension once per process, so a
 // module singleton (plus resetBrain() on session_start) preserves the original
@@ -22,7 +29,6 @@ export const brain = {
   deliberations: [] as Deliberation[],
   // /pi-brain mode gate — branch-durable, defaults off: strict=block, guided=nudge, off=disabled
   brainMode: "off" as BrainMode,
-  brainStrict: false, // legacy mirror for compat (true when mode==="strict")
   failureCount: 0, // consecutive write/edit/bash failures — 2 continuous triggers think
   // strict workflow enforcement (per-agent run) — clean: explicit recall/think flags, no hidden auto-encode
   thinkSatisfied: false,
@@ -60,7 +66,6 @@ export function resetBrain() {
   brain.plans.clear();
   brain.deliberations.length = 0;
   (brain as any).brainMode = "off";
-  brain.brainStrict = false;
   (brain as any).failureCount = 0;
   brain.thinkSatisfied = false;
   brain.hasRecall = false;

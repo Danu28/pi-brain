@@ -39,27 +39,26 @@ describe("inject — static flow note appended to user query (KV-cache friendly)
     registerInjection(runner.pi as any);
   });
 
-  it("appends static [brain] note once on new-task turn (strict)", async () => {
-    (brain as any).brainMode = "strict";
-    brain.brainStrict = true;
+  it("appends static [brain:on] note once on new-task turn", async () => {
+    (brain as any).brainMode = "on";
     const msgs = [userMsg("explain this project")];
     const res = await runner.fire("context", { messages: msgs });
     const out = res?.messages ?? msgs;
     const t = textOf(out);
-    expect(t).toContain("[brain:strict] happy: [recall?] → think → plan → batch exec → plan done → remember/habit → commit");
-    expect(t).toContain("unhappy: 2 consecutive fails → think{debug} → continue → plan done → remember → commit");
+    expect(t).toContain("[brain:on]");
+    expect(t).toContain("memory always");
 
     // idempotent: second fire does NOT append again
     const res2 = await runner.fire("context", { messages: out });
-    expect(textOf(res2?.messages ?? out).indexOf("[brain:strict]")).toBe(textOf(out).indexOf("[brain:strict]"));
+    expect(textOf(res2?.messages ?? out).indexOf("[brain:on]")).toBe(textOf(out).indexOf("[brain:on]"));
     expect((res2?.messages ?? out).length).toBe(out.length);
   });
 
-  it("guided mode appends guided note", async () => {
+  it("legacy guided mode still appends the on note (normalized)", async () => {
     (brain as any).brainMode = "guided";
     const msgs = [userMsg("refactor the reducer")];
     const out = (await runner.fire("context", { messages: msgs }))?.messages ?? msgs;
-    expect(textOf(out)).toContain("[brain:guided]");
+    expect(textOf(out)).toContain("[brain:on]");
   });
 
   it("off mode appends nothing", async () => {
@@ -71,8 +70,7 @@ describe("inject — static flow note appended to user query (KV-cache friendly)
   });
 
   it("follow-up turns ('go'/'yes') get NO note", async () => {
-    (brain as any).brainMode = "strict";
-    brain.brainStrict = true;
+    (brain as any).brainMode = "on";
     for (const q of ["go", "yes", "continue"]) {
       const msgs = [userMsg(q)];
       const out = (await runner.fire("context", { messages: msgs }))?.messages ?? msgs;

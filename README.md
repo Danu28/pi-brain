@@ -1,6 +1,6 @@
 # pi-brain — human brain → pi
 
-A `pi` extension that gives your coding agent a **hippocampus + PFC**: episodes you `remember` by cue, `recall` with TF-IDF, `think` before you act, `creative-thinking` distant ideas, `plan` in an ordered checklist, and `habit`-ize repeats. Strict workflow optional via `/pi-brain on`.
+A `pi` extension that gives your coding agent **memory + guardrails**: episodes you `remember` by cue, `recall` with TF-IDF, rubric-scored `think` deliberations, `creative-thinking` distant ideas, `plan` in an ordered checklist, and `habit`-ize repeats. One guarded mode via `/pi-brain on` — silent when work is going well, a tutor only when you fail twice.
 
 Zero runtime deps beyond the pi-bundled core (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `typebox`) — one compiled entry, one skill.
 
@@ -25,9 +25,9 @@ Then restart `pi` (or run `/reload`). Verify with `/pi-brain status` or `pi list
 
 Pi extensions run with **full system permissions**. pi-brain uses:
 
-- **Writes** `~/.pi/agent/pi-brain.json` (or `$PI_CODING_AGENT_DIR/pi-brain.json`) to persist the strict-mode toggle across sessions.
+- **Writes** `~/.pi/agent/pi-brain.json` (or `$PI_CODING_AGENT_DIR/pi-brain.json`) to persist the guarded-mode toggle across sessions.
 - **Writes** skill files at `.pi/skills/brain-<name>/SKILL.md` when the `habit` tool drafts a skill (blocked in untrusted projects).
-- **Runs git** — when a `plan` is completed, the strict workflow commits with `git init` (if needed) + `git add -A && git commit`.
+- **Runs git** — a completed `plan`'s final step commits with `git init` (if needed) + `git add -A && git commit`.
 - **Reads** optional override `pi-brain.syn.json` (cwd or `~/.pi/agent/`) merged into the synonym map.
 - **UI** — uses `notify` / `confirm` dialogs and a status bar entry for strict mode.
 
@@ -39,12 +39,12 @@ Review the source before installing; only install packages you trust.
 |---|---|
 | `remember` | encode episode (`cue`, `summary`, `detail?`, `tags?`, `refs?`) — exact cue → upsert, similar ≥3 → preview unless `force:true` |
 | `recall` | TF-IDF recall by cue/query, ranked; batch `queries[]`, filters `tags/source/since`, tag-only recall |
-| `think` | PFC scratchpad `goal + hypotheses[1..3]`, injected next turn |
+| `think` | rubric-scored deliberation `goal + hypotheses[1..3]`, decision memo output, replayable |
 | `creative-thinking` | fuse 2–3 cues + latest think into a novel approach |
 | `plan` | ordered tasklist `goal + tasks[]`, update via `id+done` (batch `done:[0,1]` in one call) |
 | `habit` | scaffold `.pi/skills/brain-<name>/SKILL.md` (+ `variant`, diff preview, undo hint) |
 | `brain-status` | episode count + token usage + overload signal, index/memo stats |
-| `/pi-brain on\|off\|status` | strict recall-only vs default pi behavior |
+| `/pi-brain on\|off\|status` | guarded mode (memory + tutor on 2 failures) vs stock pi behavior |
 
 ## Strict workflow (`/pi-brain on`)
 

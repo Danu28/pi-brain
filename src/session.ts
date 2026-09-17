@@ -4,7 +4,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
 import { compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
 import { setFooter } from "./footer";
-import { brain, readMode, renderPlan, resetBrain } from "./state";
+import { brain, getBrainMode, normalizeMode, readMode, renderPlan, resetBrain } from "./state";
 import type { BrainEpisode, BrainPlan } from "./types";
 
 export function registerSessionHandlers(pi: ExtensionAPI) {
@@ -43,8 +43,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
         }
         if (e.type === "entry" && (e.entryType === "brain:mode" || e.entry_type === "brain:mode")) {
           const d = (e as any).data ?? (e as any).entry ?? e;
-          if (typeof d?.mode === "string" && ["strict","guided","off"].includes(d.mode)) lastMode = d.mode;
-          else if (typeof d?.enabled === "boolean") lastMode = d.enabled ? "strict" : "off";
+          if (typeof d?.mode === "string" && ["on","off","strict","guided"].includes(d.mode)) lastMode = d.mode;
+          else if (typeof d?.enabled === "boolean") lastMode = normalizeMode(d.enabled) ?? undefined;
         }
         if (e.type === "entry" && (e.entryType === "brain:deliberation" || e.entry_type === "brain:deliberation")) {
           const d = (e as any).data ?? (e as any).entry ?? e;
@@ -61,15 +61,13 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
       // caller must invoke prune manually if needed; session_start does not hide episodes
       // file wins: /pi-brain strict/guided stays across sessions until /pi-brain off
       const fileMode = readMode();
-      const effective = fileMode !== undefined ? fileMode : lastMode;
+      const effective = fileMode ?? (lastMode !== undefined ? normalizeMode(lastMode) : undefined);
       if (effective !== undefined) {
-        const m = typeof effective === "string" ? effective : (effective ? "strict" : "off");
-        (brain as any).brainMode = m;
-        brain.brainStrict = m === "strict";
+        (brain as any).brainMode = effective;
       }
     } catch {}
     // reflect in footer — always, with icon + color (strict=ON, guided=ON dim, off=OFF)
-    const isStrict = (brain as any).brainMode === "strict" || brain.brainStrict;
+    const isStrict = getBrainMode() === "on";
     setFooter(pi, ctx, isStrict);
   });
 
@@ -94,9 +92,8 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
 
   // keep footer in sync if mode toggled elsewhere
   pi.on("brain:mode" as any, async (ev: any, ctx: any) => {
-    const mode = typeof ev?.mode === "string" ? ev.mode : (typeof ev?.enabled === "boolean" ? (ev.enabled ? "strict" : "off") : ((brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off")));
-    const isStrict = mode === "strict";
-    setFooter(pi, ctx, isStrict);
+    const mode = normalizeMode(ev?.mode ?? ev?.enabled) ?? getBrainMode();
+    setFooter(pi, ctx, mode === "on");
   });
 
   // resources_discover deleted — .pi/skills auto-discovered, no handler needed

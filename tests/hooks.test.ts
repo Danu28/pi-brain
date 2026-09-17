@@ -21,42 +21,51 @@ async function fireToolResult(runner: any, toolName: string, isError: boolean, e
   return runner.fire("tool_result", { toolName, isError, content: [{ type: "text", text: isError ? "boom" : "ok" }], input: {}, ...extra }, { signal: { aborted: false } });
 }
 
-describe("hooks — 2 CONSECUTIVE failures trigger think (not 2 total)", () => {
+describe("hooks — lean: silent when working, tutor on 2 failures, memory always", () => {
   let runner: ReturnType<typeof makePi>;
   beforeEach(() => {
     resetBrain();
-    (brain as any).brainMode = "strict";
-    brain.brainStrict = true;
+    (brain as any).brainMode = "on";
     runner = makePi();
     registerHooks(runner.pi as any);
   });
 
-  it("1 failure then success RESETS counter — think NOT triggered", async () => {
-    await fireToolResult(runner, "bash", true);   // failure 1/2
-    expect((brain as any).failureCount).toBe(1);
-    expect(brain.needsDebugThink).toBe(false);
-
-    await fireToolResult(runner, "bash", false);  // success → reset
-    expect((brain as any).failureCount).toBe(0);
-    expect(brain.needsDebugThink).toBe(false);
-
-    await fireToolResult(runner, "edit", true);   // failure 1/2 again
-    expect((brain as any).failureCount).toBe(1);
-    expect(brain.needsDebugThink).toBe(false);    // still only 1 consecutive
+  it("CRUX: edit/write/plan are NOT blocked without think+plan (ceremony removed)", async () => {
+    brain.thinkSatisfied = false;
+    (brain as any).hasPlan = false;
+    const e = await runner.fire("tool_call", { toolName: "edit" }, {});
+    const w = await runner.fire("tool_call", { toolName: "write" }, {});
+    const p = await runner.fire("tool_call", { toolName: "plan" }, {});
+    expect(e?.block).toBeFalsy();
+    expect(w?.block).toBeFalsy();
+    expect(p?.block).toBeFalsy();
   });
 
-  it("2 repeated failures trigger think; strict blocks retry until think{debug}", async () => {
-    await fireToolResult(runner, "edit", true);   // 1
+  it("off mode = stock pi behavior (no tutor block even with needsDebugThink)", async () => {
+    (brain as any).brainMode = "off";
+    brain.needsDebugThink = true;
+    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
+    expect(r?.block).toBeFalsy();
+  });
+
+  it("1 failure then success RESETS counter — tutor NOT triggered", async () => {
+    await fireToolResult(runner, "bash", true);
     expect((brain as any).failureCount).toBe(1);
-    await fireToolResult(runner, "edit", true);   // 2 consecutive → needsDebugThink
+    expect(brain.needsDebugThink).toBe(false);
+    await fireToolResult(runner, "bash", false);
+    expect((brain as any).failureCount).toBe(0);
+    expect(brain.needsDebugThink).toBe(false);
+  });
+
+  it("2 repeated failures trigger the tutor; write/edit blocked until think{debug}", async () => {
+    await fireToolResult(runner, "edit", true);
+    await fireToolResult(runner, "edit", true);
     expect((brain as any).failureCount).toBe(2);
     expect(brain.needsDebugThink).toBe(true);
-
-    // retry without debug think is blocked in strict mode
     const blk = await runner.fire("tool_call", { toolName: "edit" }, {});
     expect(blk?.block).toBe(true);
-
-    // debug think success → counter cleared, block released
+    expect(blk.reason).toContain("think");
+    // debug think success → tutor released
     await fireToolResult(runner, "think", false, { details: { deliberation: { goal: "debug test issue" } } });
     expect((brain as any).failureCount).toBe(0);
     expect(brain.needsDebugThink).toBe(false);
@@ -64,94 +73,37 @@ describe("hooks — 2 CONSECUTIVE failures trigger think (not 2 total)", () => {
 
   it("failures separated by ANY success never reach 2 consecutive", async () => {
     await fireToolResult(runner, "bash", true);
-    await fireToolResult(runner, "write", false); // success in between
-    await fireToolResult(runner, "bash", true);   // still 1 → not 2 total
+    await fireToolResult(runner, "write", false);
+    await fireToolResult(runner, "bash", true);
     expect((brain as any).failureCount).toBe(1);
     expect(brain.needsDebugThink).toBe(false);
   });
 
-  it("non-debug think between failures does NOT reset consecutive counter", async () => {
-    await fireToolResult(runner, "bash", true);   // 1
+  it("non-debug think between failures does NOT reset the consecutive counter", async () => {
+    await fireToolResult(runner, "bash", true);
     await fireToolResult(runner, "think", false, { details: { deliberation: { goal: "normal planning" } } });
-    await fireToolResult(runner, "bash", true);   // still consecutive → 2 → trigger
+    await fireToolResult(runner, "bash", true);
     expect((brain as any).failureCount).toBe(2);
     expect(brain.needsDebugThink).toBe(true);
   });
 
-  it("strict: recall is OPTIONAL (no block if missed), think+plan mandatory", async () => {
-    // no recall ever happened — edit must NOT be blocked for missing recall once think+plan done
-    brain.thinkSatisfied = true;
-    (brain as any).hasPlan = true;
-    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
-    expect(r?.block).toBeFalsy();
+  it("rm -rf needs UI confirm; regular bash passes through", async () => {
+    const noUi = await runner.fire("tool_call", { toolName: "bash", input: { command: "rm -rf vendor" } }, {});
+    expect(noUi?.block).toBe(true);
+    const declined = await runner.fire("tool_call", { toolName: "bash", input: { command: "rm -rf vendor" } }, { hasUI: true, ui: { confirm: async () => false } });
+    expect(declined?.block).toBe(true);
+    const allowed = await runner.fire("tool_call", { toolName: "bash", input: { command: "rm -rf vendor" } }, { hasUI: true, ui: { confirm: async () => true } });
+    expect(allowed?.block).toBeFalsy();
+    const safe = await runner.fire("tool_call", { toolName: "bash", input: { command: "ls" } }, {});
+    expect(safe?.block).toBeFalsy();
   });
 
-  it("strict: blocks edit after think but BEFORE plan", async () => {
-    brain.thinkSatisfied = true;
-    (brain as any).hasPlan = false;
-    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
-    expect(r?.block).toBe(true);
-    expect(r.reason).toContain("plan");
-  });
-
-  it("strict: blocks edit before think", async () => {
-    brain.thinkSatisfied = false;
-    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
-    expect(r?.block).toBe(true);
-    expect(r.reason).toContain("think");
-  });
-
-  it("strict: blocks plan before think (earliest gate)", async () => {
-    brain.thinkSatisfied = false;
-    const r = await runner.fire("tool_call", { toolName: "plan" }, {});
-    expect(r?.block).toBe(true);
-    expect(r.reason).toContain("think");
-    // plan must NOT have executed → hasPlan stays false so edits stay gated
-    expect((brain as any).hasPlan).toBe(false);
-  });
-
-  it("strict: plan allowed when think is pending in the SAME assistant message (batch-aware preflight)", async () => {
-    brain.thinkSatisfied = false;
-    const ctxBatch = {
-      sessionManager: {
-        getBranch: () => [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "think" }, { type: "toolCall", name: "plan" }] } }],
-      },
-    };
-    const r = await runner.fire("tool_call", { toolName: "plan" }, ctxBatch);
-    expect(r?.block).toBeFalsy();
-  });
-
-  it("strict: edit allowed when think+plan pending in the same batch (no re-emission)", async () => {
-    brain.thinkSatisfied = false;
-    (brain as any).hasPlan = false;
-    const ctxBatch = {
-      sessionManager: {
-        getBranch: () => [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "think" }, { type: "toolCall", name: "plan" }, { type: "toolCall", name: "edit" }] } }],
-      },
-    };
-    const r = await runner.fire("tool_call", { toolName: "edit" }, ctxBatch);
-    expect(r?.block).toBeFalsy();
-  });
-
-  it("strict: edit still blocked when only think pending (plan missing) — tool_calls array variant also scanned", async () => {
-    brain.thinkSatisfied = false;
-    const ctxBatch = {
-      sessionManager: {
-        getBranch: () => [{ type: "message", message: { role: "assistant", content: [], toolCalls: [{ name: "think" }, { name: "edit" }] } }],
-      },
-    };
-    const r = await runner.fire("tool_call", { toolName: "edit" }, ctxBatch);
-    expect(r?.block).toBe(true);
-    expect(r.reason).toContain("plan");
-  });
-
-  it("terse duplicate: siblings blocked by the same rule in one batch get a 1-line reason", async () => {
-    brain.thinkSatisfied = false;
-    const first = await runner.fire("tool_call", { toolName: "plan" }, {});
-    const second = await runner.fire("tool_call", { toolName: "edit" }, {}); // same preflight batch, same rule
+  it("tutor blocks several tools in one batch — second block is terse", async () => {
+    brain.needsDebugThink = true;
+    const first = await runner.fire("tool_call", { toolName: "edit" }, {});
+    const second = await runner.fire("tool_call", { toolName: "write" }, {});
     expect(first?.block).toBe(true);
     expect(second?.block).toBe(true);
     expect((first.reason as string).length).toBeGreaterThan((second.reason as string).length);
-    expect(second.reason).toMatch(/^\[brain:block/);
   });
 });

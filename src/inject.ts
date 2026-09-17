@@ -1,17 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { brain } from "./state";
+import { brain, getBrainMode } from "./state";
 
 // Clean inject — no system-prompt hijack. pi keeps its NATIVE dynamic system prompt
 // (rebuilt from tool registry + skills + loader). We only append a small STATIC flow note
 // to the end of the latest user message on new-task turns:
 //   - static text = KV-cache friendly (byte-identical every turn, no dynamic content)
 //   - plan progress / last think are NOT injected — already visible via their tool results
-// Enforcement (think/plan mandatory blocks, recall optional, 2-consecutive-failure debug,
-// rm -rf guard) lives in hooks.ts — code, not prompt. This note is steering only.
+// Lean: the note carries the only workflow (memory always · tutor on 2 failures · remember).
+// Enforcement lives in hooks.ts — code, not prompt. This note is steering only.
 
-const BRAIN_FLOW_NOTE = (mode: "strict" | "guided") =>
-  `\n\n[brain:${mode}] happy: [recall?] → think → plan → batch exec → plan done → remember/habit → commit\n` +
-  `unhappy: 2 consecutive fails → think{debug} → continue → plan done → remember → commit`;
+const BRAIN_FLOW_NOTE = `\n\n[brain:on] memory always · fail twice → think{goal:'debug …', hypotheses:[cause,fix]} · remember when done\n`;
 
 const FOLLOWUP_RE = /^(yes|yeah|yep|y|ok|okay|k|go|continue|keep going|proceed|next|done|thanks|thank you|thx|ty|lgtm|sounds good|ship it|same|again|retry|stop|no|n|that'?s it|thats it|\.{3})$/i;
 export function isFollowUpPrompt(prompt: string): boolean {
@@ -59,17 +57,17 @@ export function registerInjection(pi: ExtensionAPI) {
 
   pi.on("context" as any, async (ev: any) => {
     const msgs: any[] = ev?.messages ?? ev?.context ?? [];
-    const mode = (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off");
+    const mode = getBrainMode();
     let changed = false;
 
     // 1) Append static flow note to the LAST user message — new-task turns only, once
     //    (idempotent marker: skip if the message already carries a [brain: note).
-    if (mode === "strict" || mode === "guided") {
+    if (mode === "on") {
       const lu = lastUserMessage(msgs);
       if (lu && !lu.text.includes("[brain:")) {
         const followUp = isFollowUpPrompt(lu.text);
         if (!followUp) {
-          const note = BRAIN_FLOW_NOTE(mode as "strict" | "guided");
+          const note = BRAIN_FLOW_NOTE;
           if (typeof lu.msg.content === "string") lu.msg.content += note;
           else if (Array.isArray(lu.msg.content)) lu.msg.content.push({ type: "text", text: note });
           changed = true;

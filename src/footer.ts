@@ -24,7 +24,7 @@ export function footerLabel(ctx: any, enabled: boolean): string {
 export function setFooter(pi: ExtensionAPI, ctx: any, enabled: boolean) {
   const label = footerLabel(ctx, enabled);
   try { ctx?.ui?.setStatus?.("brain", label); } catch {}
-  try { (pi as any)._brainStrict = enabled; } catch {}
+  try { (pi as any)._brainOn = enabled; } catch {}
   // also try pi.ui if ctx missing (session_start ctx may be minimal)
   try { (pi as any).ui?.setStatus?.("brain", label); } catch {}
 }

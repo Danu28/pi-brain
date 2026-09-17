@@ -43,7 +43,6 @@ function makePi() {
 beforeEach(() => {
   resetBrain();
   (brain as any).brainMode = "off";
-  brain.brainStrict = false;
   rmSync(SANDBOX, { recursive: true, force: true });
   mkdirSync(join(SANDBOX, "proj", ".pi"), { recursive: true });
 });
@@ -264,7 +263,7 @@ describe("brain-status", () => {
     await h.run("remember", { ...ep1, force: true });
     const bs: any = await h.run("brain-status", {});
     expect(/Episodes: 1/.test(bs.content[0].text)).toBe(true);
-    expect(bs.content[0].text).toContain("Graph:");
+    expect(bs.content[0].text).toContain("Deliberations:");
     h.pi.getContextUsage = () => ({ used: 9000, total: 10000 });
     await h.run("brain-status", {});
     expect(h.events.some((e) => e.name === "brain:overload")).toBe(true);
@@ -272,17 +271,18 @@ describe("brain-status", () => {
 });
 
 describe("command + session + inject wiring", () => {
-  it("/pi-brain on|guided|off persists mode to sandboxed file + brain:mode entry", async () => {
+  it("/pi-brain on|off persists mode; legacy strict/guided alias to on", async () => {
     const h = makePi(); registerCommand(h.pi);
     const msgs: string[] = [];
     const notify = (m: string) => msgs.push(m);
     await h.commands.get("pi-brain").handler("status", { ui: { notify } });
     expect(msgs[0]).toContain("pi-brain:");
     await h.commands.get("pi-brain").handler("on", { ui: { notify } });
-    expect(brain.brainMode).toBe("strict");
-    expect(brain.brainStrict).toBe(true);
-    await h.commands.get("pi-brain").handler("guided", { ui: { notify } });
-    expect(brain.brainMode).toBe("guided");
+    expect(brain.brainMode).toBe("on");
+    await h.commands.get("pi-brain").handler("guided", { ui: { notify } }); // legacy alias → on
+    expect(brain.brainMode).toBe("on");
+    await h.commands.get("pi-brain").handler("strict", { ui: { notify } }); // legacy alias → on
+    expect(brain.brainMode).toBe("on");
     expect(existsSync(join(SANDBOX, "pi-brain.json"))).toBe(true); // sandboxed — never ~/.pi/agent
     await h.commands.get("pi-brain").handler("off", { ui: { notify } });
     expect(brain.brainMode).toBe("off");
@@ -304,13 +304,13 @@ describe("command + session + inject wiring", () => {
 
   it("context inject appends the static note once and skips follow-ups", async () => {
     const h = makePi(); registerInjection(h.pi); registerHooks(h.pi);
-    brain.brainMode = "strict";
+    brain.brainMode = "on";
     const msgs = [{ role: "user", content: [{ type: "text", text: "explain this project" }] }];
     const out = (await h.fire("context", { messages: msgs }))?.messages ?? msgs;
     const txt = (m: any) => [...m].reverse().find((x: any) => x.role === "user")?.content?.map((b: any) => b?.text ?? "").join("") ?? "";
-    expect(txt(out)).toContain("[brain:strict]");
+    expect(txt(out)).toContain("[brain:on]");
     const out2 = (await h.fire("context", { messages: out }))?.messages ?? out;
-    expect((txt(out2).match(/\[brain:strict\]/g) || []).length).toBe(1);
+    expect((txt(out2).match(/\[brain:on\]/g) || []).length).toBe(1);
     const fu = [{ role: "user", content: [{ type: "text", text: "go" }] }];
     const out3 = (await h.fire("context", { messages: fu }))?.messages ?? fu;
     expect(txt(out3)).toBe("go");
