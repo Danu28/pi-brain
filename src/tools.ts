@@ -266,7 +266,7 @@ export function registerTools(pi: ExtensionAPI) {
         if(params.goal) pl.goal=truncate(params.goal);
         const pid = (params as any).parentId as string | undefined;
         if(pid) (pl as any).parentId = pid;
-        pl.ts=Date.now(); brain.cachedLatestPlan=pl; brain.needsPlanUpdate=false;
+        pl.ts=Date.now(); brain.cachedLatestPlan=pl; brain.needsPlanUpdate=false; brain.hasPlan=true;
         await (pi as any).appendEntry?.("brain:plan", pl);
         (pi as any).events?.emit?.("brain:plan", pl);
         return {content:[{type:"text",text:truncate(renderPlan(pl)+`\n(id: ${pl.id})` + (pl.parentId?` parent:${pl.parentId}`:""))}],details:{plan:pl}};
@@ -310,7 +310,7 @@ export function registerTools(pi: ExtensionAPI) {
       const tasksRich = kept.map(t=>({ title:truncate(t.parsed.title), done:false, refs:t.parsed.refs, check:t.parsed.check, estimate:t.parsed.estimate, risk:t.parsed.risk, depends:t.parsed.depends, relevance: t.rel.score }));
       const pl: BrainPlan={ id:`brain-plan:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, goal:truncate(params.goal!), tasks: tasksRich, ts:Date.now(), parentId: (params as any).parentId as string | undefined, links: links.length?links:undefined, debateId, score: kept.length? Math.round(kept.reduce((a,b)=>a+b.rel.score,0)/kept.length*10)/10 : undefined };
       if((params as any).done?.length) for(const i of (params as any).done as number[]) if(pl.tasks[i]) pl.tasks[i].done=true;
-      brain.plans.set(pl.id, pl); brain.cachedLatestPlan=pl; brain.needsPlanUpdate=false;
+      brain.plans.set(pl.id, pl); brain.cachedLatestPlan=pl; brain.needsPlanUpdate=false; brain.hasPlan=true;
       await (pi as any).appendEntry?.("brain:plan", pl); (pi as any).events?.emit?.("brain:plan", pl);
       const taskLines = tasksRich.map((t,i)=>`[ ] Task ${i+1}: ${t.title} — ${formatRelevance(t.relevance!)}${t.refs?` refs:${t.refs.join(",")}`:""}${t.check?` check:${t.check.slice(0,30)}`:""}${t.risk!==undefined?` risk:${t.risk}`:""}${t.depends?.length?` depends:[${t.depends.map(d=>d+1).join(",")}]`:""}`).join("\n");
       return {content:[{type:"text",text:truncate(`${pl.goal} — relevance ${pl.score!==undefined?formatRelevance(pl.score):"n/a"}${pl.parentId?` (parent ${pl.parentId})`:""}${links.length?` links:[${links.join(",")}]`:""}${debateId?` debate:${debateId}`:""}\n` + taskLines + qdsNote + debateNote + `\n(id: ${pl.id})` + `\n[Verifiable DAG: next task blocked until check passes]`)}],details:{plan:pl, deletedCount, links, debateId}};

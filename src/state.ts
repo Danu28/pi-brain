@@ -29,6 +29,7 @@ export const brain = {
   hasRecall: false,
   hasWriteEdit: false,
   hasRemember: false,
+  hasPlan: false, // think+plan mandatory (strict): plan tool success sets this
   rule5Warned: false,
   needsDebugThink: false, // unhappy path: 2 continuous failures → must think before retry
   needsPlanUpdate: false, // deprecated — kept for compat, not used as hard block
@@ -65,6 +66,7 @@ export function resetBrain() {
   brain.hasRecall = false;
   brain.hasWriteEdit = false;
   brain.hasRemember = false;
+  (brain as any).hasPlan = false;
   brain.rule5Warned = false;
   brain.needsDebugThink = false;
   brain.needsPlanUpdate = false;

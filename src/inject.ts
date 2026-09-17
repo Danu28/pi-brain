@@ -10,8 +10,8 @@ Happy (2-call floor): recall (top-3) → think (smart reads) → [creative-think
 Unhappy: same happy path but during batch execution 2 continuous write/edit/bash failures → think{goal:"debug <issue>", hypotheses:[cause,fix]} → continue execution → plan done → remember → habit → git commit. Strict blocks write/edit/bash until debug think done; guided nudges. No looping — think WHY it fails instead of retrying same error.
 Batch: 1 LLM call = N tool calls. Turn1: read×N parallel; Turn2: edit×N+write×N+bash parallel. Chunk edits: 1 edit per file, exact oldText, merge nearby changes. If oldText known → skip reads → 1 call. Record → 0-call replay. Prefer plan{hypotheses} single-shot (think+plan 2→1). 5-Step: Question→Delete→Simplify→Accelerate→Automate.
 
-1. Recall-first: call recall{query} ONCE as the FIRST tool call of a new task (strict blocks write/edit until then). Skip on follow-up turns (continue/go/yes). Do NOT call recall again during execution — exactly 1 recall per task.
-2. Think-before-act: think MUST smart-read required relevant files first, then call think{goal,hypotheses} — ensure all info needed to finish task is gathered BEFORE plan (enforced — write will be blocked otherwise; no broad reading, only relevant files).
+1. Recall-optional: call recall{query} ONCE at task start IF you need prior episodes — NEVER blocked if skipped. Do not re-recall during execution.
+2. Think + Plan MANDATORY: think MUST smart-read required relevant files first, then call think{goal,hypotheses}, then plan{goal,tasks} — write/edit blocked until BOTH done (no broad reading, only relevant files).
 3. Creative-thinking-only-for-novelty: call creative-thinking when task is creative/novel (e.g. "creative login", "novel approach"), SKIP for CRUD/bugfix — do this BEFORE planning to get all inputs.
 4. Plan-after-inputs: after think (+ creative-thinking if novel) → plan #1 creates [ ] checklist; final update is plan #2 done:[0,1,...] batch all (no incremental). Unhappy: plan #2 after debug think, plan #3 final batch. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.
 5. Shortest-diff + Batch: Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, 1 edit per file with exact oldText, no scaffolding for later. Bash verify after edits land (not same call as edit it checks).
@@ -31,8 +31,8 @@ Happy: recall → think (smart reads) → [creative-thinking if novel] → plan 
 Unhappy: recall → think → [creative-thinking if novel] → plan → batch execution (if 2 continuous failures) → think{goal:"debug <issue>", hypotheses:[cause,fix]} → continue → plan done → remember → habit → commit.
 Note: 2 continuous write/edit/bash failures only trigger think (guided = nudge, not block). Safety rm -rf still blocks.
 Guide (not enforced):
-1. Recall-first: call recall{query} ONCE as the FIRST tool call of a new task (optional if no prior episodes). Skip on follow-up turns (continue/go/yes). Do NOT call recall again during execution — 1 recall per task only.
-2. think before act (smart reads first) — guided nudge only
+1. Recall-optional: call recall{query} ONCE at task start IF you need prior episodes — never blocked if skipped. Do not re-recall during execution.
+2. Think + Plan before act: think{goal,hypotheses} → plan{goal,tasks} (smart reads first) — guided nudge only
 3. creative-thinking only for novel tasks, skip for CRUD
 4. plan after inputs, batch execution as above
 5. shortest-diff + batch as above
@@ -60,6 +60,7 @@ export function registerInjection(pi: ExtensionAPI) {
       brain.hasWriteEdit = false;
       brain.hasRemember = false;
       brain.rule5Warned = false;
+      (brain as any).hasPlan = false;
     }
     // failureCount persists across turns for 2-continuous detection — do not reset here
     // no prune, no budgetTrim — clean: no hidden side-effects

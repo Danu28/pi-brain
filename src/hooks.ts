@@ -104,30 +104,31 @@ export function registerHooks(pi: ExtensionAPI) {
         // guided: nudge only, do not block
       }
     }
-    // Rule 1 recall-first: strict BLOCK, guided NUDGE
-    if (!brain.hasRecall && ["write", "edit"].includes(ev?.toolName)) {
+    // Strict: Think + Plan MANDATORY — recall OPTIONAL (never blocked if missed)
+    if ((ev?.toolName === "write" || ev?.toolName === "edit")) {
       if (mode === "strict") {
-        brain.stats.block++;
-        (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 1, reason: "recall first", mode });
-        if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 1 recall first — call recall{query} before write/edit`, "warning"); } catch {}
-        return { block: true, reason: "Blocked by strict Rule 1: call recall{query} first to check prior episodes (explicit, no auto-injection)." } as any;
+        if (!brain.thinkSatisfied) {
+          brain.stats.block++;
+          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act", mode });
+          if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 2 think first`, "warning"); } catch {}
+          return { block: true, reason: "Blocked by strict Rule 2: call think{goal,hypotheses} before write/edit. Think is MANDATORY." } as any;
+        }
+        if (!(brain as any).hasPlan) {
+          brain.stats.block++;
+          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 4, reason: "plan after think", mode });
+          if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 4 plan first`, "warning"); } catch {}
+          return { block: true, reason: "Blocked by strict Rule 4: call plan{goal,tasks} AFTER think before write/edit. Think + Plan are MANDATORY." } as any;
+        }
       } else if (mode === "guided") {
-        brain.stats.nudge++;
-        (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 1, reason: "recall recommended", mode });
-        try { (ctx as any)?.ui?.notify?.("Guided nudge: consider recall{query} first to check prior episodes", "warning"); } catch {}
-      }
-    }
-    // Rule 2 think-before-act: strict BLOCK, guided NUDGE
-    if ((ev?.toolName === "write" || ev?.toolName === "edit") && !brain.thinkSatisfied) {
-      if (mode === "strict") {
-        brain.stats.block++;
-        (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act", mode });
-        if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 2 think first`, "warning"); } catch {}
-        return { block: true, reason: "Blocked by strict Rule 2: call think{goal,hypotheses} before write/edit. Deliberate 2-3 approaches first." } as any;
-      } else if (mode === "guided") {
-        brain.stats.nudge++;
-        (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 2, reason: "think recommended", mode });
-        try { (ctx as any)?.ui?.notify?.("Guided nudge: consider think{goal,hypotheses} before write/edit", "warning"); } catch {}
+        if (!brain.thinkSatisfied) {
+          brain.stats.nudge++;
+          (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 2, reason: "think recommended", mode });
+          try { (ctx as any)?.ui?.notify?.("Guided nudge: consider think{goal,hypotheses} before write/edit", "warning"); } catch {}
+        } else if (!(brain as any).hasPlan) {
+          brain.stats.nudge++;
+          (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 4, reason: "plan recommended", mode });
+          try { (ctx as any)?.ui?.notify?.("Guided nudge: consider plan{goal,tasks} after think before write/edit", "warning"); } catch {}
+        }
       }
     }
   });

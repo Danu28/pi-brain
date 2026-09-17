@@ -77,4 +77,27 @@ describe("hooks — 2 CONSECUTIVE failures trigger think (not 2 total)", () => {
     expect((brain as any).failureCount).toBe(2);
     expect(brain.needsDebugThink).toBe(true);
   });
+
+  it("strict: recall is OPTIONAL (no block if missed), think+plan mandatory", async () => {
+    // no recall ever happened — edit must NOT be blocked for missing recall once think+plan done
+    brain.thinkSatisfied = true;
+    (brain as any).hasPlan = true;
+    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
+    expect(r?.block).toBeFalsy();
+  });
+
+  it("strict: blocks edit after think but BEFORE plan", async () => {
+    brain.thinkSatisfied = true;
+    (brain as any).hasPlan = false;
+    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
+    expect(r?.block).toBe(true);
+    expect(r.reason).toContain("plan");
+  });
+
+  it("strict: blocks edit before think", async () => {
+    brain.thinkSatisfied = false;
+    const r = await runner.fire("tool_call", { toolName: "edit" }, {});
+    expect(r?.block).toBe(true);
+    expect(r.reason).toContain("think");
+  });
 });

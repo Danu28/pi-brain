@@ -23,6 +23,7 @@ export function registerCommand(pi: ExtensionAPI) {
         brain.needsPlanUpdate = false;
         brain.hasWriteEdit = false;
         brain.hasRemember = false;
+        (brain as any).hasPlan = false;
         writeMode(mode as any);
         await (pi as any).appendEntry?.("brain:mode", { mode, enabled: mode === "strict", ts: Date.now() });
         setFooter(pi, ctx, mode === "strict");
