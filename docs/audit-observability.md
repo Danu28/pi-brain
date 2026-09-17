@@ -6,12 +6,12 @@
 ## Hooks do exactly three things
 
 1. **Tutor** (`tool_result` + `tool_call`) — counts consecutive `write`/`edit`/`bash` failures.
-   At 2 in a row, further `write/edit/bash` are **blocked** until `think{goal:'debug <task>', hypotheses:[cause, fix]}`
-   succeeds. A debug `think` or any successful `write/edit/bash` clears the counter.
+   At 2 in a row, further `write`/`edit` are **blocked** until `think{goal:'debug <task>', hypotheses:[cause, fix]}`
+   succeeds. `bash` stays free (probing/verification is never locked); any success or a debug `think` clears the counter.
    Duplicate blocks in one batch are terse (first block explains).
 2. **Safety** (`tool_call`) — `rm -rf` (or `rm -r -f` / `rm --recursive --force`) requires `ui.confirm`.
 3. **Memory nudge** (`turn_end`) — edits landed + plan done but no `remember` yet → nudges once
-   ("2nd repeat → `habit`").
+   ("2nd repeat → `habit`"). An audit-blocked `remember` counts as attempted — the nudge stops.
 
 No happy-path gates. No mode-specific branches — hooks only read `on`/`off`.
 `think`, `plan`, `creative-thinking` are never mandatory before `write`/`edit`.

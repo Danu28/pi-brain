@@ -65,6 +65,11 @@ describe("hooks — lean: silent when working, tutor on 2 failures, memory alway
     const blk = await runner.fire("tool_call", { toolName: "edit" }, {});
     expect(blk?.block).toBe(true);
     expect(blk.reason).toContain("think");
+    // bash stays FREE while armed — probing/verification is never locked
+    const bsh = await runner.fire("tool_call", { toolName: "bash", input: { command: "git status" } }, {});
+    expect(bsh?.block).toBeFalsy();
+    const w = await runner.fire("tool_call", { toolName: "write" }, {});
+    expect(w?.block).toBe(true);
     // debug think success → tutor released
     await fireToolResult(runner, "think", false, { details: { deliberation: { goal: "debug test issue" } } });
     expect((brain as any).failureCount).toBe(0);
@@ -105,5 +110,18 @@ describe("hooks — lean: silent when working, tutor on 2 failures, memory alway
     expect(first?.block).toBe(true);
     expect(second?.block).toBe(true);
     expect((first.reason as string).length).toBeGreaterThan((second.reason as string).length);
+  });
+
+  it("audit-blocked remember counts as attempted — Rule-5 nudge does not loop", async () => {
+    brain.hasWriteEdit = true;
+    (brain as any).cachedLatestPlan = { tasks: [{ title: "t", done: true }], ts: Date.now() };
+    const n1: string[] = [];
+    await runner.fire("turn_end", {}, { ui: { notify: (m: string) => n1.push(m) } });
+    expect(n1.length).toBeGreaterThan(0); // first nudge fires
+    await fireToolResult(runner, "remember", false, { details: { blocked: true } }); // audit blocked
+    expect(brain.hasRemember).toBe(true); // attempted counts as done
+    const n2: string[] = [];
+    await runner.fire("turn_end", {}, { ui: { notify: (m: string) => n2.push(m) } });
+    expect(n2.length).toBe(0); // no nudge loop
   });
 });

@@ -4,7 +4,8 @@ import { brain, getBrainMode, isPlanDone, isVerbose } from "./state";
 
 // pi-brain lean — silent when it works, a tutor only when you fail twice, memory always.
 // Hooks do exactly three things, nothing else:
-//   1. tutor: count consecutive write/edit/bash failures → 2 in a row = blocked until think{debug}
+//   1. tutor: count consecutive write/edit/bash failures → 2 in a row arms the tutor =
+//      write/edit blocked until think{debug} (bash stays free for probing/verification)
 //   2. safety: rm -rf needs UI confirm
 //   3. memory: turn_end nudges `remember` once when edits landed and plan is done, no remember yet
 // No happy-path ceremony: think/plan/creative-thinking are NEVER mandatory before write/edit.
@@ -34,7 +35,12 @@ export function registerHooks(pi: ExtensionAPI) {
     }
     if ((ev?.toolName === "remember" || ev?.toolName === "habit") && !ev?.isError) {
       const blocked = (ev as any)?.details?.blocked === true || (ev as any)?.result?.blocked === true;
-      if (!blocked) {
+      if (blocked) {
+        // audit-blocked (similar episode / preview) — the model DID attempt persistence;
+        // the audit message already teaches force:true / habit. Don't re-nudge on turn_end.
+        brain.hasRemember = true;
+        brain.rule5Warned = true;
+      } else {
         brain.hasRemember = true;
         brain.hasWriteEdit = false;
         brain.rule5Warned = false;
@@ -94,12 +100,13 @@ export function registerHooks(pi: ExtensionAPI) {
         }
       }
     }
-    // the tutor: 2 continuous failures → block write/edit/bash until think{debug}
-    if (brain.needsDebugThink && ["write", "edit", "bash"].includes(ev?.toolName)) {
+    // the tutor: 2 continuous failures → block write/edit until think{debug}.
+    // bash intentionally stays free — the model must be able to probe/verify while armed.
+    if (brain.needsDebugThink && (ev?.toolName === "write" || ev?.toolName === "edit")) {
       brain.stats.block++;
       (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsDebugThink", reason: "2 continuous failures require debug think" });
       if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} needsDebugThink`, "warning"); } catch {}
-      return { block: true, reason: blockHint("needsDebugThink", "Blocked by pi-brain: 2 continuous failures — call think{goal:'debug <failed Task N>', hypotheses:[root cause, fix]} before retry.", "[brain:block — think{goal:'debug <task>', hypotheses:[cause, fix]} before retry]") } as any;
+      return { block: true, reason: blockHint("needsDebugThink", "Blocked by pi-brain: 2 continuous failures — call think{goal:'debug <failed Task N>', hypotheses:[root cause, fix]} before retrying write/edit (bash is still free for probing).", "[brain:block — think{goal:'debug <task>', hypotheses:[cause, fix]} before write/edit]") } as any;
     }
   });
 

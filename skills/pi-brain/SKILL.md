@@ -24,8 +24,9 @@ are tools, never requirements. If the work is going well, the extension is silen
 ## Rules (all three)
 
 1. **Memory always** — hooks never write silently; only explicit `remember` persists episodes.
-2. **Tutor on 2 failures** — two consecutive `write`/`edit`/`bash` failures block further edits until
-   `think{goal:'debug <task>', hypotheses:[cause, fix]}`. Any success (or a debug `think`) clears the counter.
+2. **Tutor on 2 failures** — two consecutive `write`/`edit`/`bash` failures arm the tutor:
+   further `write`/`edit` are **blocked** until `think{goal:'debug <task>', hypotheses:[cause, fix]}`.
+   `bash` stays free for probing; any success (or a debug `think`) clears the counter.
 3. **Remember when done** — after edits landed + plan done with no `remember`, `turn_end` nudges once
    (`remember {cue, summary}` — same fix a 2nd time → `habit`).
 
