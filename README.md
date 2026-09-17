@@ -26,8 +26,9 @@ Then restart `pi` (or run `/reload`). Verify with `/pi-brain status` or `pi list
 Pi extensions run with **full system permissions**. pi-brain uses:
 
 - **Writes** `~/.pi/agent/pi-brain.json` (or `$PI_CODING_AGENT_DIR/pi-brain.json`) to persist the strict-mode toggle across sessions.
+- **Writes** `~/.pi/agent/pi-brain-memory.json` (or `$PI_CODING_AGENT_DIR/pi-brain-memory.json`) — durable sidecar snapshot of episodes/plans so memory survives `/resume`, `/fork`, compactions and `/tree` navigation (branch entries are compaction-pruned; the sidecar is not).
 - **Writes** skill files at `.pi/skills/brain-<name>/SKILL.md` when the `habit` tool drafts a skill (blocked in untrusted projects).
-- **Runs git** — when a `plan` is completed, the strict workflow commits with `git init` (if needed) + `git add -A && git commit`.
+- **Runs git** — when a `plan` is completed, the strict workflow commits with `git init` (if needed) + `git add -A && git commit`. This is a model-driven nudge in the plan/SKILL instructions, not an enforced block.
 - **Reads** optional override `pi-brain.syn.json` (cwd or `~/.pi/agent/`) merged into the synonym map.
 - **UI** — uses `notify` / `confirm` dialogs and a status bar entry for strict mode.
 

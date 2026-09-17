@@ -100,7 +100,9 @@ export function registerHooks(pi: ExtensionAPI) {
         const cur = ev.content?.[0]?.text ?? "";
         return { content: [{ type: "text", text: truncate(cur + hint) }] } as any;
       } else {
-        try { (ctx as any)?.ui?.notify?.(`Failure ${cnt}/2 — 1 more continuous failure will trigger debug think`, "warning"); } catch {}
+        // pre-threshold failures: keep the in-result hint (model sees it), skip the toast
+        // (chatty) unless PI_BRAIN_VERBOSE — the 2nd failure notifies via the branch above
+        if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`Failure ${cnt}/2 — 1 more continuous failure will trigger debug think`, "warning"); } catch {}
         (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: "failureCount", count: cnt });
         (brain as any).stats.nudge++;
         const hint = `\n[ brain: failure ${cnt}/2 — 2 continuous failures trigger think{debug} ]`;

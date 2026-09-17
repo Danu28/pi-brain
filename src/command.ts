@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { setFooter } from "./footer";
-import { brain, writeMode } from "./state";
+import { brain, saveMemory, writeMode } from "./state";
 
 export function registerCommand(pi: ExtensionAPI) {
   // /pi-brain command — strict=block, guided=nudge, off=disabled
@@ -25,6 +25,7 @@ export function registerCommand(pi: ExtensionAPI) {
         brain.hasRemember = false;
         (brain as any).hasPlan = false;
         writeMode(mode as any);
+        saveMemory(); // keep the sidecar snapshot in sync with the toggle
         await (pi as any).appendEntry?.("brain:mode", { mode, enabled: mode === "strict", ts: Date.now() });
         setFooter(pi, ctx, mode === "strict");
         (pi as any).events?.emit?.("brain:mode", { mode, enabled: mode === "strict" });

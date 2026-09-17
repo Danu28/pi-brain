@@ -265,7 +265,7 @@ describe("brain-status", () => {
     const bs: any = await h.run("brain-status", {});
     expect(/Episodes: 1/.test(bs.content[0].text)).toBe(true);
     expect(bs.content[0].text).toContain("Graph:");
-    h.pi.getContextUsage = () => ({ used: 9000, total: 10000 });
+    h.pi.getContextUsage = () => ({ tokens: 9000, contextWindow: 10000, percent: 90 });
     await h.run("brain-status", {});
     expect(h.events.some((e) => e.name === "brain:overload")).toBe(true);
   });
@@ -293,13 +293,37 @@ describe("command + session + inject wiring", () => {
   it("session_start rebuilds episodes/plans/mode from branch and rebuilds index", async () => {
     const h = makePi(); registerSessionHandlers(h.pi);
     h.pi.sessionManager = { getBranch: () => [
-      { type: "entry", entryType: "brain:episode", data: { id: "e1", cue: "branch-ep", summary: "episode from branch", ts: 1, source: "remember" } },
-      { type: "entry", entryType: "brain:plan", data: { id: "pl1", goal: "g", tasks: [{ title: "t", done: true }], ts: 1 } },
+      { type: "custom", customType: "brain:episode", data: { id: "e1", cue: "branch-ep", summary: "episode from branch", ts: 2, source: "remember" } },
+      { type: "custom", customType: "brain:plan", data: { id: "pl1", goal: "g", tasks: [{ title: "t", done: true }], ts: 2 } },
+      { type: "custom", customType: "brain:mode", data: { mode: "guided", enabled: false, ts: 2 } },
     ] };
     await h.fire("session_start", {}, { sessionManager: h.pi.sessionManager, ui: {} });
-    expect(brain.episodes.size).toBe(1);
-    expect(brain.plans.size).toBe(1);
+    expect(brain.episodes.has("e1")).toBe(true);
+    expect(brain.plans.has("pl1")).toBe(true);
     expect(brain.tokenIndex.size).toBeGreaterThan(0);
+    // file wins over branch: no pi-brain.json in sandbox → branch mode applies
+    expect((brain as any).brainMode).toBe("guided");
+  });
+
+  it("session_tree re-derives state for the new branch (todo.ts pattern)", async () => {
+    const h = makePi(); registerSessionHandlers(h.pi);
+    h.pi.sessionManager = { getBranch: () => [
+      { type: "custom", customType: "brain:episode", data: { id: "t1", cue: "tree-ep", summary: "episode on this branch", ts: 3, source: "remember" } },
+    ] };
+    await h.fire("session_tree", {}, { sessionManager: h.pi.sessionManager, ui: {} });
+    expect(brain.episodes.has("t1")).toBe(true);
+  });
+
+  it("sidecar memory store survives resetBranch (compaction-safe persistence)", async () => {
+    const h = makePi(); registerTools(h.pi);
+    await h.run("remember", { cue: "durable-fix", summary: "episode persisted to sidecar memory file", tags: ["store"], force: true });
+    const before = brain.episodes.size;
+    expect(before).toBeGreaterThan(0);
+    resetBrain(); // simulates fork/resume/compact boundary
+    expect(brain.episodes.size).toBe(0);
+    await import("../src/state").then(({ loadMemory }) => loadMemory());
+    expect(brain.episodes.size).toBe(before);
+    expect([...brain.episodes.values()].some((e: any) => e.cue === "durable-fix")).toBe(true);
   });
 
   it("context inject appends the static note once and skips follow-ups", async () => {
@@ -316,13 +340,15 @@ describe("command + session + inject wiring", () => {
     expect(txt(out3)).toBe("go");
   });
 
-  it("compaction injects compressed episodes", async () => {
+  it("compaction injects compressed episodes with the documented result shape", async () => {
     const h = makePi(); registerTools(h.pi); registerSessionHandlers(h.pi);
     await h.run("remember", { cue: "compact-a", summary: "first compacted episode about cache invalidation", force: true });
     await h.run("remember", { cue: "compact-b", summary: "second compacted episode about db migrations", force: true });
     await h.run("remember", { cue: "compact-c", summary: "third compacted episode about ui theming", force: true });
-    const comp: any = await h.fire("session_before_compact", { summary: "ctx" }, {});
-    expect(comp?.summary).toContain("Brain episodes:");
-    expect(comp.summary.length).toBeLessThan(1500);
+    const comp: any = await h.fire("session_before_compact", { summary: "ctx", preparation: { firstKeptEntryId: "keep-1", tokensBefore: 1234 } }, {});
+    expect(comp?.compaction?.summary).toContain("Brain episodes:");
+    expect(comp.compaction.summary.length).toBeLessThan(1500);
+    expect(comp.compaction.firstKeptEntryId).toBe("keep-1");
+    expect(comp.compaction.tokensBefore).toBe(1234);
   });
 });

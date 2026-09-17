@@ -8,6 +8,28 @@ export function readMode(): BrainMode | undefined { try { const v = JSON.parse(r
 export function writeMode(mode: BrainMode | boolean) { try { const m: BrainMode = typeof mode === "boolean" ? (mode ? "strict" : "off") : mode; mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ mode: m, enabled: m === "strict", ts: Date.now() }), "utf8"); } catch {} }
 export function getBrainMode(): BrainMode { return (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off"); }
 
+// Durable sidecar store (branch-agnostic, compaction-safe). Custom entries only render in the
+// TUI and are dropped from the session behind the compaction boundary, so episodes/plans are
+// ALSO persisted to $PI_CODING_AGENT_DIR/pi-brain-memory.json on every mutation and re-loaded
+// on session_start/session_tree. Mode stays governed by MODE_FILE (file wins).
+export function memoryFilePath(): string {
+  return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain-memory.json");
+}
+export function loadMemory(): void {
+  try {
+    const v = JSON.parse(readFileSync(memoryFilePath(), "utf8"));
+    if (Array.isArray(v?.episodes)) for (const e of v.episodes) if (e?.id) brain.episodes.set(e.id, e as BrainEpisode);
+    if (Array.isArray(v?.plans)) for (const p of v.plans) if (p?.id && Array.isArray(p.tasks)) brain.plans.set(p.id, p as BrainPlan);
+  } catch {}
+}
+export function saveMemory(): boolean {
+  try {
+    mkdirSync(dirname(memoryFilePath()), { recursive: true });
+    writeFileSync(memoryFilePath(), JSON.stringify({ episodes: [...brain.episodes.values()], plans: [...brain.plans.values()], mode: getBrainMode(), ts: Date.now() }), "utf8");
+    return true;
+  } catch { return false; }
+}
+
 // Module-singleton brain state. pi loads an extension once per process, so a
 // module singleton (plus resetBrain() on session_start) preserves the original
 // "one factory, one Map" behavior — branch-safe waking, no class/DI.

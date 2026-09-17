@@ -4,8 +4,59 @@ import { Text } from "@earendil-works/pi-tui";
 import { COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
 import { compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
 import { setFooter } from "./footer";
-import { brain, readMode, renderPlan, resetBrain } from "./state";
+import { brain, loadMemory, readMode, renderPlan, resetBrain, saveMemory } from "./state";
 import type { BrainEpisode, BrainPlan } from "./types";
+
+// Latest usable ctx (captured at session_start/session_tree) for bus-driven UI updates;
+// pi.events.on data callbacks carry no ctx.
+let lastCtx: any = null;
+
+// Branch-safe rebuild: pi persists extension state as custom entries with the shape
+// { type: "custom", customType: "<brain:*>", data: {...} } (session-format.md).
+// The legacy branch path is overlaid AFTER the durable sidecar so the newest occurrence
+// (branch order is chronological) wins. Returns the last mode entry seen, if any.
+function rebuildFromBranch(ctx: any): any {
+  let lastMode: any;
+  try {
+    const branch: any[] = ctx?.sessionManager?.getBranch?.() ?? [];
+    for (const e of branch) {
+      if (!e || typeof e !== "object") continue;
+      if (e.type === "custom" && e.customType === "brain:episode") {
+        const d = e.data ?? e;
+        if (d?.id) brain.episodes.set(d.id, d as BrainEpisode);
+      } else if (e.type === "custom" && e.customType === "brain:plan") {
+        const d = e.data ?? e;
+        if (d?.id && Array.isArray(d.tasks)) brain.plans.set(d.id, d as BrainPlan);
+      } else if (e.type === "custom" && e.customType === "brain:mode") {
+        const d = e.data ?? e;
+        if (typeof d?.mode === "string" && ["strict", "guided", "off"].includes(d.mode)) lastMode = d.mode;
+        else if (typeof d?.enabled === "boolean") lastMode = d.enabled ? "strict" : "off";
+      } else if (e.type === "custom" && e.customType === "brain:deliberation") {
+        const d = e.data ?? e;
+        if (d?.goal) brain.deliberations.push(d as any);
+      } else if (e.type === "message" && e.message?.role === "toolResult" && e.message?.toolName === "remember") {
+        const ep = e.message?.details?.episode;
+        if (ep?.id) brain.episodes.set(ep.id, ep);
+      }
+    }
+  } catch {}
+  return lastMode;
+}
+
+function applyMode(fileMode: any, branchMode: any) {
+  // file wins: /pi-brain strict/guided stays across sessions until /pi-brain off
+  const effective = fileMode !== undefined ? fileMode : branchMode;
+  if (effective !== undefined) {
+    const m = typeof effective === "string" ? effective : (effective ? "strict" : "off");
+    (brain as any).brainMode = m;
+    brain.brainStrict = m === "strict";
+  }
+}
+
+function refreshFooter(pi: ExtensionAPI, ctx: any) {
+  const isStrict = (brain as any).brainMode === "strict" || brain.brainStrict;
+  setFooter(pi, ctx, isStrict);
+}
 
 export function registerSessionHandlers(pi: ExtensionAPI) {
   // TUI renderer for brain:episode — collapsed cue, expanded detail (not in LLM context)
@@ -26,51 +77,27 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     });
   } catch {}
 
-  // T04: waking recall — rebuild from branch (branch-safe, like waking)
+  // Waking recall: durable sidecar first (compaction-safe, cross-session), then overlay the
+  // current branch (newest occurrence wins). Branch-safe like waking, plus /tree re-derivation.
   pi.on("session_start" as any, async (_ev: any, ctx: any) => {
     resetBrain();
-    try {
-      const branch: any[] = ctx.sessionManager?.getBranch?.() ?? [];
-      let lastMode: any | undefined;
-      for (const e of branch) {
-        if (e.type === "entry" && (e.entryType === "brain:episode" || e.entry_type === "brain:episode")) {
-          const d = (e as any).data ?? (e as any).entry ?? e;
-          if (d?.id) brain.episodes.set(d.id, d as BrainEpisode);
-        }
-        if (e.type === "entry" && (e.entryType === "brain:plan" || e.entry_type === "brain:plan")) {
-          const d = (e as any).data ?? (e as any).entry ?? e;
-          if (d?.id && Array.isArray(d.tasks)) brain.plans.set(d.id, d as BrainPlan);
-        }
-        if (e.type === "entry" && (e.entryType === "brain:mode" || e.entry_type === "brain:mode")) {
-          const d = (e as any).data ?? (e as any).entry ?? e;
-          if (typeof d?.mode === "string" && ["strict","guided","off"].includes(d.mode)) lastMode = d.mode;
-          else if (typeof d?.enabled === "boolean") lastMode = d.enabled ? "strict" : "off";
-        }
-        if (e.type === "entry" && (e.entryType === "brain:deliberation" || e.entry_type === "brain:deliberation")) {
-          const d = (e as any).data ?? (e as any).entry ?? e;
-          if (d?.goal) brain.deliberations.push(d as any);
-        }
-        if (e.type === "message" && (e as any).message?.role === "toolResult" && (e as any).message?.toolName === "remember") {
-          const ep = (e as any).message?.details?.episode;
-          if (ep?.id) brain.episodes.set(ep.id, ep);
-        }
-      }
-      // rebuild incremental index
-      rebuildIndex();
-      // clean: no auto-prune — expiry/TTL and cap eviction are explicit via pruneExpired() or brain-status
-      // caller must invoke prune manually if needed; session_start does not hide episodes
-      // file wins: /pi-brain strict/guided stays across sessions until /pi-brain off
-      const fileMode = readMode();
-      const effective = fileMode !== undefined ? fileMode : lastMode;
-      if (effective !== undefined) {
-        const m = typeof effective === "string" ? effective : (effective ? "strict" : "off");
-        (brain as any).brainMode = m;
-        brain.brainStrict = m === "strict";
-      }
-    } catch {}
-    // reflect in footer — always, with icon + color (strict=ON, guided=ON dim, off=OFF)
-    const isStrict = (brain as any).brainMode === "strict" || brain.brainStrict;
-    setFooter(pi, ctx, isStrict);
+    loadMemory();
+    const branchMode = rebuildFromBranch(ctx);
+    rebuildIndex();
+    applyMode(readMode(), branchMode);
+    lastCtx = ctx;
+    refreshFooter(pi, ctx);
+  });
+
+  // /tree navigation changes the active branch without a session_start — re-derive state
+  // (todo.ts pattern) so recalls never leak memories from other branches.
+  pi.on("session_tree" as any, async (_ev: any, ctx: any) => {
+    resetBrain();
+    loadMemory();
+    rebuildFromBranch(ctx);
+    rebuildIndex();
+    lastCtx = ctx;
+    refreshFooter(pi, ctx);
   });
 
   pi.on("session_before_compact" as any, async (ev: any) => {
@@ -88,20 +115,23 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     if (!sliced.length) return;
     const keep = sliced.length <= 15 ? sliced.slice(0, COMPACT_SMALL) : sliced.slice(0, COMPACT_LARGE);
     const front = `Brain episodes:\n${compressEpisodes(keep)}`;
-    const summary = ev?.summary ? `${front}\n\n${ev.summary}` : front;
-    return { summary } as any;
+    const base = ev?.summary ?? "";
+    const summary = base ? `${front}\n\n${base}` : front;
+    // Contract (extensions.md / compaction.md): return { compaction: { summary, firstKeptEntryId, tokensBefore } }
+    return { compaction: { summary, firstKeptEntryId: ev?.preparation?.firstKeptEntryId ?? "", tokensBefore: ev?.preparation?.tokensBefore ?? 0 } } as any;
   });
 
-  // keep footer in sync if mode toggled elsewhere
-  pi.on("brain:mode" as any, async (ev: any, ctx: any) => {
+  // keep footer in sync if mode toggled anywhere in the process — custom events live on the
+  // pi.events bus (event-bus.ts), NOT pi.on (which only dispatches lifecycle events).
+  (pi as any).events?.on?.("brain:mode", async (ev: any) => {
     const mode = typeof ev?.mode === "string" ? ev.mode : (typeof ev?.enabled === "boolean" ? (ev.enabled ? "strict" : "off") : ((brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off")));
-    const isStrict = mode === "strict";
-    setFooter(pi, ctx, isStrict);
+    refreshFooter(pi, lastCtx);
   });
 
   // resources_discover deleted — .pi/skills auto-discovered, no handler needed
 
   pi.on("session_shutdown" as any, async () => {
-    // idempotent — entries already durable, nothing to flush
+    // durable flush — sidecar keeps memory across compaction/branch/session boundaries
+    saveMemory();
   });
 }
