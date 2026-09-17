@@ -30,7 +30,7 @@ Brain-inspired memory for pi. One file, one Map — recall 2.0 + incremental ind
 
 ## Command
 
-- `/pi-brain on` — strict mode: hard blocks enforced by hooks (code, not prompt): think + plan MANDATORY before `write/edit`; 2 consecutive `write/edit/bash` failures → blocked until `think{goal:'debug …'}`; `rm -rf` needs UI confirm. Recall stays OPTIONAL (never blocked). Persisted to `$PI_CODING_AGENT_DIR/pi-brain.json` (default `~/.pi/agent/pi-brain.json`) + `brain:mode` branch entry — stays on across sessions until `/pi-brain off`; file wins over branch on `session_start`.
+- `/pi-brain on` — strict mode: hard blocks enforced by hooks (code, not prompt): `plan` gated on think, think + plan MANDATORY before `write/edit`; 2 consecutive `write/edit/bash` failures → blocked until `think{goal:'debug …'}`; `rm -rf` needs UI confirm. Recall stays OPTIONAL (never blocked). Persisted to `$PI_CODING_AGENT_DIR/pi-brain.json` (default `~/.pi/agent/pi-brain.json`) + `brain:mode` branch entry — stays on across sessions until `/pi-brain off`; file wins over branch on `session_start`.
 - `/pi-brain guided` — same flow as notes/nudges, no hard blocks (except `rm -rf`).
 - `/pi-brain off` — extension disabled, default pi behavior restored.
 - `/pi-brain status` (or bare `/pi-brain`) — dashboard table: episodes, deliberations, plan, tokens, overload, recent cues, index stats.
@@ -38,13 +38,14 @@ Brain-inspired memory for pi. One file, one Map — recall 2.0 + incremental ind
 ## Behavior
 
 - Default (`off`): disabled — no notes, no blocks, no nudges, stock pi behavior.
+- Strict (`on`): 7-rule workflow enforced by extension (not docs): **Gate fires early + batch-aware.** `plan` is gated on `think` — the Rule-2 block hits the first pre-edit tool, not the write/edit batch. Preflight is batch-aware: a pending `think`/`plan` call in the SAME assistant message counts as satisfied (pi preflights all siblings before any executes), so a compliant batched model is never blocked and never re-emits.
 - Strict (`on`): 7-rule workflow enforced by extension (not docs): **Happy (2-call floor): recall → think → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel → plan #2 done:[all] → remember → habit → git commit**
   **Unhappy (3-call floor): same flow but 3 plan calls — plan #1 → failure → think{goal:'debug <Task N> — <tool>: <err>', hypotheses:[cause,fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember (enforced: `tool_call` blocks write/edit/bash until debug-think).**
   **Batch: 1 LLM call = N tool calls. Turn1 read×N; Turn2 edit×N+write×N+bash. Chunk edits: 1 edit/file, exact oldText, merge nearby. If oldText known → 1 call. Record → 0-call replay. 5-Step: Question→Delete→Simplify→Accelerate→Automate. // ponytail: deleted readCache, add per-path cache if throughput matters**
   1. **Recall-first (optional)** — `recall` by cue/query to pattern-complete from memory before acting; recall is NEVER required or blocked. Empty query allowed; tag filter intersects. Time-travel: replay past think/plan via verbatim id.
-  2. **Think-before-act** — `tool_call` blocks `write/edit` until `think{goal,hypotheses}` called + `plan{goal,tasks[]}` created (per-agent run).
+  2. **Think-before-act** — `tool_call` blocks `plan` until `think{goal,hypotheses}` called (earliest gate) and blocks `write/edit` until think + `plan{goal,tasks[]}` created (per-agent run). Batch-aware: a pending `think`/`plan` call in the same assistant message counts as satisfied; duplicate blocks within one batch are terse (first one explains).
   3. **Creative-thinking-only-for-novelty** — prompt instructs: `creative-thinking` for creative/novel tasks, skip for CRUD/bugfix (before plan to get all inputs). Now fuses `think` deliberation + episodes.
-  4. **Plan-after-inputs** — `think` (+ `creative-thinking` if used) → `plan{goal,tasks[]}` creates `[ ]` list; mark `[x]` via `plan{id,done:[i]}`; verifiable DAG (`depends` must be earlier tasks — invalid depends rejected). All-done → Rule 5 nudge to `remember`. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.
+  4. **Plan-after-inputs** — `think` (+ `creative-thinking` if used) → `plan{goal,tasks[]}` (plan itself is gated on think in strict) creates `[ ]` list; mark `[x]` via `plan{id,done:[i]}`; verifiable DAG (`depends` must be earlier tasks — invalid depends rejected). All-done → Rule 5 nudge to `remember`. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.
   5. **Shortest-diff + Batch** — Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, 1 edit/file with exact oldText, no scaffolding for later. Bash verify after edits land.
   6. **Encode** — explicit: call `remember` to persist what matters; hooks only set flags (no auto-encode, no hidden writes). `turn_end` Rule 5 nudges if write/edit succeeded without `remember`; 2nd repeat → `habit`; habit preview checks collision.
   7. **Git** — when plan 2/2 done + remember done, `bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>'` (auto-init first time, skip if no changes).

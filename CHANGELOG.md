@@ -2,6 +2,15 @@
 
 All notable changes to pi-brain follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Strict gate timing** — `plan` is now gated on `think` (Rule 2 fires at the earliest pre-edit tool, not on the write/edit batch), so skipping `think` costs one small blocked `plan` instead of a full blocked edit batch + re-emission. (`src/hooks.ts`)
+- **Batch-aware preflight** — pending sibling `think`/`plan` calls in the same assistant message count as satisfying the gate (pi preflights all siblings before any executes), so a compliant batched model is never blocked and never re-emits edits. (`src/hooks.ts`)
+- **Terse duplicate block hints** — siblings blocked by the same rule in one batch get a 1-line reason; the first block carries the full explanation (cuts block noise on multi-tool batches). (`src/hooks.ts`)
+- Guided mode nudges on `plan` too (same earlier-steering benefit, no blocks). (`src/hooks.ts`)
+
 ## [1.0.0] — 2026-09-14
 
 First publishable pi package release.

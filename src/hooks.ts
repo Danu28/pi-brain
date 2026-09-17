@@ -6,6 +6,43 @@ import { brain, isPlanDone, isVerbose } from "./state";
 // Every persistence is explicit via remember. Hooks only set flags, guard, and nudge.
 
 export function registerHooks(pi: ExtensionAPI) {
+  // Preflight-aware gate: pi preflights ALL sibling tool calls of one assistant
+  // message BEFORE any executes (docs/extensions.md :: tool_call). A model that
+  // batches think→plan→edit in ONE message would otherwise get its edits blocked
+  // because thinkSatisfied/hasPlan don't flip until execute() runs. Scan the last
+  // assistant message for pending sibling calls and count them as satisfying the gate.
+  const pendingSiblingNames = (ctx: any): Set<string> => {
+    const names = new Set<string>();
+    try {
+      const branch: any[] = ctx?.sessionManager?.getBranch?.() ?? [];
+      for (let i = branch.length - 1; i >= 0; i--) {
+        const e = branch[i];
+        if (e?.type !== "message") continue;
+        const m = e?.message;
+        if (m?.role !== "assistant") continue;
+        const content = Array.isArray(m.content) ? m.content : [];
+        for (const c of content) {
+          if (c && typeof c === "object" && (c.type === "toolCall" || c.type === "tool_call") && typeof (c as any).name === "string") names.add((c as any).name);
+        }
+        for (const k of ["toolCalls", "tool_calls"]) {
+          const tc = m[k];
+          if (Array.isArray(tc)) for (const c of tc) { if (c && typeof c.name === "string") names.add(c.name); }
+        }
+        break; // only the current assistant tool-calling message
+      }
+    } catch {}
+    return names;
+  };
+  // Terse duplicate-block hint: siblings blocked by the same rule in the same
+  // preflight batch (within 2s) get a 1-line reason — the first one carries the explanation.
+  let lastBlockHint: { rule: string; ts: number } | null = null;
+  const blockHint = (rule: string, long: string, short: string): string => {
+    const now = Date.now();
+    const dupe = !!lastBlockHint && lastBlockHint.rule === rule && now - lastBlockHint.ts < 2000;
+    lastBlockHint = { rule, ts: now };
+    return dupe ? short : long;
+  };
+
   pi.on("tool_result" as any, async (ev: any, ctx: any) => {
     if (ctx?.signal?.aborted) return;
     // clean: edit/write/bash success only sets flags — NO auto episode creation
@@ -96,7 +133,7 @@ export function registerHooks(pi: ExtensionAPI) {
         brain.stats.block++;
         (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "needsDebugThink", reason: "2 continuous failures require debug think", mode });
         if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} needsDebugThink (strict)`, "warning"); } catch {}
-        return { block: true, reason: "Blocked by strict: 2 continuous failures — call think{goal:'debug <failed Task N>', hypotheses:[root cause, fix]} before retry." } as any;
+        return { block: true, reason: blockHint("needsDebugThink", "Blocked by strict: 2 continuous failures — call think{goal:'debug <failed Task N>', hypotheses:[root cause, fix]} before retry.", "[brain:block needsDebugThink — call think{goal:'debug <task>', hypotheses:[cause, fix]} before retry]") } as any;
       } else if (mode === "guided") {
         brain.stats.nudge++;
         (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: "needsDebugThink", reason: "2 continuous failures — think recommended", mode });
@@ -104,27 +141,41 @@ export function registerHooks(pi: ExtensionAPI) {
         // guided: nudge only, do not block
       }
     }
-    // Strict: Think + Plan MANDATORY — recall OPTIONAL (never blocked if missed)
-    if ((ev?.toolName === "write" || ev?.toolName === "edit")) {
+    // Strict: Think + Plan MANDATORY — recall OPTIONAL (never blocked if missed).
+    // Gate fires EARLIEST (plan is the first pre-edit tool) and is batch-aware:
+    // a pending think/plan call in the SAME assistant message counts as satisfied
+    // (preflight runs before any sibling executes, so flags flip mid-batch).
+    if (ev?.toolName === "write" || ev?.toolName === "edit" || ev?.toolName === "plan") {
+      const pending = pendingSiblingNames(ctx);
       if (mode === "strict") {
-        if (!brain.thinkSatisfied) {
+        const thinkOk = brain.thinkSatisfied || pending.has("think");
+        if (ev?.toolName === "plan" && !thinkOk) {
           brain.stats.block++;
-          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act", mode });
-          if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 2 think first`, "warning"); } catch {}
-          return { block: true, reason: "Blocked by strict Rule 2: call think{goal,hypotheses} before write/edit. Think is MANDATORY." } as any;
+          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before plan", mode });
+          if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block plan Rule 2 think first`, "warning"); } catch {}
+          return { block: true, reason: blockHint("r2", "Blocked by strict Rule 2: call think{goal,hypotheses} BEFORE plan — plan is gated on think. Think is MANDATORY.", "[brain:block Rule 2 — call think{goal,hypotheses} first, then plan]") } as any;
         }
-        if (!(brain as any).hasPlan) {
-          brain.stats.block++;
-          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 4, reason: "plan after think", mode });
-          if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 4 plan first`, "warning"); } catch {}
-          return { block: true, reason: "Blocked by strict Rule 4: call plan{goal,tasks} AFTER think before write/edit. Think + Plan are MANDATORY." } as any;
+        if (ev?.toolName === "write" || ev?.toolName === "edit") {
+          if (!thinkOk) {
+            brain.stats.block++;
+            (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act", mode });
+            if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 2 think first`, "warning"); } catch {}
+            return { block: true, reason: blockHint("r2", "Blocked by strict Rule 2: call think{goal,hypotheses} before write/edit. Think is MANDATORY — re-issue the batch after think + plan succeed.", "[brain:block Rule 2 — call think{goal,hypotheses} first, then re-issue edits]") } as any;
+          }
+          const planOk = (brain as any).hasPlan || (pending.has("think") && pending.has("plan"));
+          if (!planOk) {
+            brain.stats.block++;
+            (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 4, reason: "plan after think", mode });
+            if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 4 plan first`, "warning"); } catch {}
+            return { block: true, reason: blockHint("r4", "Blocked by strict Rule 4: call plan{goal,tasks} AFTER think before write/edit. Think + Plan are MANDATORY.", "[brain:block Rule 4 — call plan{goal,tasks} first, then re-issue edits]") } as any;
+          }
         }
       } else if (mode === "guided") {
         if (!brain.thinkSatisfied) {
           brain.stats.nudge++;
           (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 2, reason: "think recommended", mode });
-          try { (ctx as any)?.ui?.notify?.("Guided nudge: consider think{goal,hypotheses} before write/edit", "warning"); } catch {}
-        } else if (!(brain as any).hasPlan) {
+          try { (ctx as any)?.ui?.notify?.("Guided nudge: consider think{goal,hypotheses} before plan/write/edit", "warning"); } catch {}
+        } else if (!(brain as any).hasPlan && (ev?.toolName === "write" || ev?.toolName === "edit")) {
           brain.stats.nudge++;
           (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 4, reason: "plan recommended", mode });
           try { (ctx as any)?.ui?.notify?.("Guided nudge: consider plan{goal,tasks} after think before write/edit", "warning"); } catch {}

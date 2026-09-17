@@ -100,4 +100,58 @@ describe("hooks — 2 CONSECUTIVE failures trigger think (not 2 total)", () => {
     expect(r?.block).toBe(true);
     expect(r.reason).toContain("think");
   });
+
+  it("strict: blocks plan before think (earliest gate)", async () => {
+    brain.thinkSatisfied = false;
+    const r = await runner.fire("tool_call", { toolName: "plan" }, {});
+    expect(r?.block).toBe(true);
+    expect(r.reason).toContain("think");
+    // plan must NOT have executed → hasPlan stays false so edits stay gated
+    expect((brain as any).hasPlan).toBe(false);
+  });
+
+  it("strict: plan allowed when think is pending in the SAME assistant message (batch-aware preflight)", async () => {
+    brain.thinkSatisfied = false;
+    const ctxBatch = {
+      sessionManager: {
+        getBranch: () => [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "think" }, { type: "toolCall", name: "plan" }] } }],
+      },
+    };
+    const r = await runner.fire("tool_call", { toolName: "plan" }, ctxBatch);
+    expect(r?.block).toBeFalsy();
+  });
+
+  it("strict: edit allowed when think+plan pending in the same batch (no re-emission)", async () => {
+    brain.thinkSatisfied = false;
+    (brain as any).hasPlan = false;
+    const ctxBatch = {
+      sessionManager: {
+        getBranch: () => [{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "think" }, { type: "toolCall", name: "plan" }, { type: "toolCall", name: "edit" }] } }],
+      },
+    };
+    const r = await runner.fire("tool_call", { toolName: "edit" }, ctxBatch);
+    expect(r?.block).toBeFalsy();
+  });
+
+  it("strict: edit still blocked when only think pending (plan missing) — tool_calls array variant also scanned", async () => {
+    brain.thinkSatisfied = false;
+    const ctxBatch = {
+      sessionManager: {
+        getBranch: () => [{ type: "message", message: { role: "assistant", content: [], toolCalls: [{ name: "think" }, { name: "edit" }] } }],
+      },
+    };
+    const r = await runner.fire("tool_call", { toolName: "edit" }, ctxBatch);
+    expect(r?.block).toBe(true);
+    expect(r.reason).toContain("plan");
+  });
+
+  it("terse duplicate: siblings blocked by the same rule in one batch get a 1-line reason", async () => {
+    brain.thinkSatisfied = false;
+    const first = await runner.fire("tool_call", { toolName: "plan" }, {});
+    const second = await runner.fire("tool_call", { toolName: "edit" }, {}); // same preflight batch, same rule
+    expect(first?.block).toBe(true);
+    expect(second?.block).toBe(true);
+    expect((first.reason as string).length).toBeGreaterThan((second.reason as string).length);
+    expect(second.reason).toMatch(/^\[brain:block/);
+  });
 });
