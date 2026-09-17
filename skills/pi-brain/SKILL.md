@@ -5,13 +5,13 @@ description: Use pi-brain when you need to remember, recall, reason or habituate
 
 # pi-brain
 
-Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + incremental index + gated inject.
+Brain-inspired memory for pi. One file, one Map — recall 2.0 + incremental index + strict workflow gates.
 
 ## When to use
 
 - Persist a decision/fix across fork/resume/compact → `remember` (with tags/refs)
 - Find a prior fix/episode → `recall` (TF-IDF + tag boost + half-life + filters)
-- Reason explicitly before acting → `think` (deliberation scratchpad) or single-shot `plan{hypotheses}`
+- Reason explicitly before acting → `think` (PFC deliberation debate graph)
 - Combine distant ideas for novelty → `creative-thinking`
 - Repeated correction → `habit` (+ preview + undo hint)
 - How full is memory → `brain-status` or `/pi-brain status` dashboard
@@ -20,37 +20,38 @@ Brain-inspired memory for pi. One file, one Map — now with recall 2.0 + increm
 
 - `remember {cue, summary, detail?, tags?: string[] (≤8 kebab), refs?: string[] (≤5 files)}` — durable episode (`brain:episode` entry). Tags weight 1.5× in recall, refs show in TUI.
 - `recall {query?, queries?: string[] (≤5 batch), limit?, tags?: string[], source?: "remember"|"auto", since?: "7d"|"24h"|ms|ISO}` — TF-IDF ranked recall (cue 2×, summary 1×, detail 0.5× per term + tag boost + half-life 0.5/7d). Empty query + tags allowed (tag-only). Batch `queries[]` = 1 call = N recalls. Incremental token→ids index + 30s memo + fallback scan.
-- `think {goal, hypotheses[], conclusion?}` — PFC deliberation, injected next turn via `before_agent_start`. Unhappy path: goal must start with `debug`.
-- `plan {goal, tasks[], id?, done?, hypotheses?: string[]}` — **detailed** ordered checklist after think+creative-thinking (`[ ] Task 1` → `[x] Task 1` via `plan{id,done:[0]}`), `brain:plan` entry. **Requires 3-10 tasks, each detailed (≥10 chars) and well-split to match the user requirement** — a good plan makes execution trivial. Aim 8-10 when the requirement is multi-step; keep 3 minimum. **>10 tasks: chunk — create with first 10, then `plan{id,tasks:["remaining…"]}` appends** (validation is actionable, not a raw schema error). Single-shot: include `hypotheses` to auto-create deliberation (2 calls → 1). When all [x], `bash: git init if needed + commit`. Auto-link: when all done + hasWriteEdit, turn_end surfaces prefilled `remember` template. Example (8 tasks for "add auth flow"): `["think + analyze auth requirement & existing routes","design token schema + decide storage","implement login endpoint","implement refresh/logout","add middleware + protect routes","write client integration","verify with bash + tests","remember + habit"]` — tool stays small, output stays detailed.
+- `think {goal, hypotheses[], conclusion?}` — PFC deliberation (debate graph: 2 debaters + judge, rubric cost/risk/reversibility, winner pinned, loser pruned, parentId branching). Unhappy path: goal must start with `debug`. Replay later via `recall{query:"<think id>"}` (verbatim id).
+- `plan {goal, tasks[], id?, done?}` — **detailed** ordered checklist after think+creative-thinking (`[ ] Task 1` → `[x] Task 1` via `plan{id,done:[0]}`), `brain:plan` entry. **Requires 3-10 tasks, each detailed (≥10 chars) and well-split to match the user requirement** — a good plan makes execution trivial. Aim 8-10 when the requirement is multi-step; keep 3 minimum. **>10 tasks: chunk — create with first 10, then `plan{id,tasks:["remaining…"]}` appends** (validation is actionable, not a raw schema error). `depends:0,1` (rich tasks) = 0-based indices of EARLIER tasks — self-refs, cycles and out-of-range depends are rejected with a clear error. When all [x], `bash: git init if needed + commit`. Rule 5: after plan all-done + write/edit succeeded, turn_end nudges `remember` (encode-or-it-didn't-happen). Example (8 tasks for "add auth flow"): `["think + analyze auth requirement & existing routes","design token schema + decide storage","implement login endpoint","implement refresh/logout","add middleware + protect routes","write client integration","verify with bash + tests","remember + habit"]` — tool stays small, output stays detailed.
 - `creative-thinking {cues: [2-3], prompt?}` — divergent synthesis fusing episodes + latest `think`. Prompt e.g. `creative-thinking neon + login into glass login` NOT `creative approach`; loose/missing auto-enriched with cues+think goal.
 - `habit {name, when, steps, variant?, force?: boolean}` — draft `.pi/skills/brain-<name>/SKILL.md`; `variant` adds alternative. Preview: if exists returns diff + "call again with force:true to confirm"; reports sanitized name + `rm -r` undo hint. Blocked if project untrusted.
 - `brain-status {}` — dashboard table: episodes | deliberations | plan | tokens | overload | recent cues + index stats; emits `brain:overload` if >80% or episodes>50.
 
-> 7 tools total (remember/recall/think/creative-thinking/plan/habit/brain-status — 7 impls). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Gated inject:** strict: scored top-3 (1 if no match) + trace; default: 1 episode +1 deliberation gated (~250 tokens saved/turn). **Single-shot:** `plan{hypotheses}` creates deliberation (2→1). **Compact:** <15→3 else 5, overload→5. **Trim:** `context` dedups duplicate episode blocks then tails to 20.
+> 7 tools total (remember/recall/think/creative-thinking/plan/habit/brain-status — 7 impls). **Recall 2.0:** filters `tags/source/since` AND with query, half-life decay, tag boost, tag-only recall, incremental `Map<token,Set<id>>` updated on encode. **Inject (clean):** no scored auto-inject, no systemPrompt clamp — only a small STATIC `[brain:mode]` flow note appended to the latest user message on new-task turns (KV-cache friendly), plus legacy-block dedup. **Compact:** <15→3 else 5. **Replay:** `recall{query:"<think id>"}` / `recall{query:"<brain-plan id>"}` (verbatim ids).
 
 ## Command
 
-- `/pi-brain on` — strict mode: all queries answered **only** from brain episodes (scored recall injected + systemPrompt clamp; no external knowledge). Persisted to `$PI_CODING_AGENT_DIR/pi-brain.json` (default `~/.pi/agent/pi-brain.json`) + `brain:mode` branch entry — stays on across sessions until `/pi-brain off`; file wins over branch on `session_start`.
-- `/pi-brain off` — default pi behavior (relevance-gated 1–2 injection).
+- `/pi-brain on` — strict mode: hard blocks enforced by hooks (code, not prompt): think + plan MANDATORY before `write/edit`; 2 consecutive `write/edit/bash` failures → blocked until `think{goal:'debug …'}`; `rm -rf` needs UI confirm. Recall stays OPTIONAL (never blocked). Persisted to `$PI_CODING_AGENT_DIR/pi-brain.json` (default `~/.pi/agent/pi-brain.json`) + `brain:mode` branch entry — stays on across sessions until `/pi-brain off`; file wins over branch on `session_start`.
+- `/pi-brain guided` — same flow as notes/nudges, no hard blocks (except `rm -rf`).
+- `/pi-brain off` — extension disabled, default pi behavior restored.
 - `/pi-brain status` (or bare `/pi-brain`) — dashboard table: episodes, deliberations, plan, tokens, overload, recent cues, index stats.
 
 ## Behavior
 
-- Default (`off`): gated 1 episode +1 deliberation auto-inject via `before_agent_start` (strict gets top-3 scored).
+- Default (`off`): disabled — no notes, no blocks, no nudges, stock pi behavior.
 - Strict (`on`): 7-rule workflow enforced by extension (not docs): **Happy (2-call floor): recall → think → [creative-thinking if novel] → plan #1 → Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel → plan #2 done:[all] → remember → habit → git commit**
   **Unhappy (3-call floor): same flow but 3 plan calls — plan #1 → failure → think{goal:'debug <Task N> — <tool>: <err>', hypotheses:[cause,fix]} → plan #2 → retry Turn1/Turn2 → plan #3 done:[all] → remember (enforced: `tool_call` blocks write/edit/bash until debug-think).**
   **Batch: 1 LLM call = N tool calls. Turn1 read×N; Turn2 edit×N+write×N+bash. Chunk edits: 1 edit/file, exact oldText, merge nearby. If oldText known → 1 call. Record → 0-call replay. 5-Step: Question→Delete→Simplify→Accelerate→Automate. // ponytail: deleted readCache, add per-path cache if throughput matters**
-  1. **Recall-first** — `before_agent_start` scores TF-IDF top-5 + decay for prompt + `systemPrompt` clamp (`ONLY from episodes, cite cue`). Empty query allowed; tag filter intersects.
-  2. **Think-before-act** — `tool_call` blocks `write/edit` until `think{goal,hypotheses}` or `plan{hypotheses}` called (per-agent run).
+  1. **Recall-first (optional)** — `recall` by cue/query to pattern-complete from memory before acting; recall is NEVER required or blocked. Empty query allowed; tag filter intersects. Time-travel: replay past think/plan via verbatim id.
+  2. **Think-before-act** — `tool_call` blocks `write/edit` until `think{goal,hypotheses}` called + `plan{goal,tasks[]}` created (per-agent run).
   3. **Creative-thinking-only-for-novelty** — prompt instructs: `creative-thinking` for creative/novel tasks, skip for CRUD/bugfix (before plan to get all inputs). Now fuses `think` deliberation + episodes.
-  4. **Plan-after-inputs** — `think` (+ `creative-thinking` if used) → `plan{goal,tasks[]}` creates `[ ]` list; single-shot `plan{hypotheses}` allowed; mark `[x]` via `plan{id,done:[i]}`; latest plan auto-injected. All-done → prefilled `remember` hint. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.
+  4. **Plan-after-inputs** — `think` (+ `creative-thinking` if used) → `plan{goal,tasks[]}` creates `[ ]` list; mark `[x]` via `plan{id,done:[i]}`; verifiable DAG (`depends` must be earlier tasks — invalid depends rejected). All-done → Rule 5 nudge to `remember`. Execution is batched: Turn1 read×N, Turn2 edit×N+write×N+bash.
   5. **Shortest-diff + Batch** — Turn1 read×N parallel → Turn2 edit×N+write×N+bash parallel, 1 edit/file with exact oldText, no scaffolding for later. Bash verify after edits land.
-  6. **Encode** — `tool_result` auto-encodes `write/edit/bash` with indexed episode; `turn_end`/`agent_end` nudges if `remember`/`habit` not called; 2nd repeat → `habit`; habit preview checks collision.
+  6. **Encode** — explicit: call `remember` to persist what matters; hooks only set flags (no auto-encode, no hidden writes). `turn_end` Rule 5 nudges if write/edit succeeded without `remember`; 2nd repeat → `habit`; habit preview checks collision.
   7. **Git** — when plan 2/2 done + remember done, `bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: <goal>'` (auto-init first time, skip if no changes).
   Rebuilt from `brain:mode` + `brain:plan` on `session_start` (branch-durable, index rebuilt).
-- `edit/write/bash` auto-encode (indexed); `bash` error hints recall with failedTool snippet; `rm -rf` confirm.
+- `edit/write/bash` success only records flags (`hasWriteEdit`); 2 CONSECUTIVE failures → debug-think gate (strict blocks, guided nudges); `rm -rf` needs UI confirm.
 - Compaction injects top 3 if <15 else 5; overload keeps 5.
-- `context` dedups duplicate episode blocks then prunes >40 msgs / >30KB → system + last 20.
+- `context` dedups duplicate legacy brain blocks; nothing new is injected today — the static `[brain:]` flow note is appended once per new-task turn (idempotent).
 
 ## Pi Default Tools (pi-brain must know)
 
@@ -71,6 +72,7 @@ Rule: Turn1 `read×N` parallel → Turn2 `edit×N+write×N+bash` parallel. 1 edi
 ```
 remember { cue:"my-fix", summary:"lazy-load DB pool fixes cold start", tags:["infra"], refs:["pi-brain/index.ts"] }
 recall { query:"cold start", tags:["infra"], since:"7d", limit:3 }  // tag-only: recall { query:"", tags:["landmine"] }
-plan { goal:"fix cold start", hypotheses:["pool init eager 10s","lazy-load pool on recall"], tasks:["fix pool with lazy init","bash verify pool works"] } // single-shot saves think (hypotheses ≥10 chars)
+think { goal:"which fix for cold start", hypotheses:["eager pool init 10s","lazy-load pool on first query"] }
+plan { goal:"fix cold start", tasks:["implement lazy pool init lazy","bash verify pool works","remember + habit"] }
 ```
 Cue cheat sheet: `kebab-short` (2×), tags for grouping, refs for file jump, since filters recency, half-life auto-decays stale.

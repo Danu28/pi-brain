@@ -17,6 +17,13 @@ First publishable pi package release.
 - Added `tsconfig.json` (strict), `tsup.config.ts` (ESM + dts + sourcemap), vitest suite (`tests/scoring.test.ts`) — ported from the inline self-check.
 - Added CI (`ci.yml`) and release (`release.yml`) GitHub Actions workflows.
 
+### Fixed (2026-09-17)
+
+- `recall` time-travel replay: `think:`/`brain-plan:` ids already carry their prefix, so a verbatim `recall{query:"<id>"}` double-prefixed and silently missed the stored id. Replay now normalizes before matching — both the verbatim-id and prefix+id conventions resolve.
+- `plan` depends DAG: self-references, cycles and out-of-range indices are now rejected at create/append with a clear error (depends must be 0-based indices of EARLIER tasks). Previously such tasks could never complete — silently stalling the Rule-5 nudge and the plan-done → commit step.
+- `skills/pi-brain/SKILL.md` synced to the clean implementation: removed stale auto-encode / systemPrompt-clamp / scored-inject / `plan{hypotheses}` claims (hooks set flags only; inject appends a static flow note).
+- Added `tests/tools.test.ts` — first permanent tool-level coverage (remember/recall/think/plan/habit/brain-status/command, replay + DAG regressions) and `vitest.config.ts` sandboxing `PI_CODING_AGENT_DIR`.
+
 ### Install
 
 ```bash

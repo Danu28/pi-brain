@@ -96,7 +96,9 @@ export function registerTools(pi: ExtensionAPI) {
       // QDS 3) Simplify — show memory with its relevance (like human seeing relevance)
       const withRel = scored.map(x=>({ e: x.e, s: x.s, rel: Math.min(10, Math.round(x.s*10)/10) }));
       // enhanced: think + plan graph traversal + time-travel replay
-      const replayThinkId = queries[0]?.match(/(think:[\w:-]+)/)?.[1];
+      // think/plan ids already carry their prefix (think:<ts>:<salt>) — normalize a double prefix so BOTH
+      // the verbatim id and the prefix+id conventions resolve (previously replay silently missed every time).
+      const replayThinkId = queries[0]?.replace(/^think:think:/, "think:").match(/(think:[\w:-]+)/)?.[1];
       if (replayThinkId) {
         const delib = brain.deliberations.find(d=> d.id===replayThinkId);
         if (delib) {
@@ -106,7 +108,7 @@ export function registerTools(pi: ExtensionAPI) {
           return {content:[{type:"text",text:truncate(replayText)}],details:{deliberation:delib, replay:true}} as any;
         }
       }
-      const replayPlanId = queries[0]?.match(/(brain-plan:[\w:-]+)/)?.[1];
+      const replayPlanId = queries[0]?.replace(/^brain-plan:brain-plan:/, "brain-plan:").match(/(brain-plan:[\w:-]+)/)?.[1];
       if (replayPlanId) {
         const pl = brain.plans.get(replayPlanId);
         if (pl) {
@@ -257,6 +259,9 @@ export function registerTools(pi: ExtensionAPI) {
             const parsed = parsePlanTask(raw);
             const norm=parsed.title.trim().toLowerCase();
             if(!existing.has(norm)){
+              // DAG safety: depends must reference an EARLIER task in the final list (no self-ref, no cycle, no out-of-range)
+              if(parsed.depends?.some(d=> !(Number.isInteger(d) && d>=0 && d<pl.tasks.length)))
+                return { content: [{ type: "text", text: `Append rejected: "${parsed.title.slice(0,60)}" has invalid depends ${JSON.stringify(parsed.depends)} — depends are 0-based indices of EARLIER tasks (valid: 0..${pl.tasks.length-1}). Fix depends and retry.` }], details: { error: "invalid depends", task: pl.tasks.length, depends: parsed.depends } } as any;
               const rel = relevanceForRemember(pl.goal, parsed.title, undefined, undefined, parsed.refs);
               pl.tasks.push({title:truncate(parsed.title),done:false, refs:parsed.refs, check:parsed.check, estimate:parsed.estimate, risk:parsed.risk, depends:parsed.depends, relevance: rel.score});
               existing.add(norm);
@@ -307,6 +312,10 @@ export function registerTools(pi: ExtensionAPI) {
       // costed portfolio note (simple sum)
       const totalRisk = kept.reduce((a,b)=>a+(b.parsed.risk??5),0);
       const qdsNote = deletedCount ? `\n[QDS Delete: ${deletedCount} low-relevance task hidden <4/10]` : "";
+      // DAG safety: depends must reference an EARLIER final task — checked AFTER the QDS filter so indices
+      // match the stored plan (rejects self-ref, cycles, out-of-range with a clear error instead of deadlocking)
+      const depErrIdx = kept.findIndex((t, i) => t.parsed.depends?.some(d => !(Number.isInteger(d) && d >= 0 && d < i)));
+      if (depErrIdx >= 0) return { content: [{ type: "text", text: `Plan rejected: Task ${depErrIdx+1} "${kept[depErrIdx].parsed.title.slice(0,60)}" has invalid depends ${JSON.stringify(kept[depErrIdx].parsed.depends)} — depends are 0-based indices of EARLIER tasks in the final list (valid: 0..${depErrIdx-1}). Fix depends and retry.` }], details: { error: "invalid depends", task: depErrIdx, depends: kept[depErrIdx].parsed.depends } } as any;
       const tasksRich = kept.map(t=>({ title:truncate(t.parsed.title), done:false, refs:t.parsed.refs, check:t.parsed.check, estimate:t.parsed.estimate, risk:t.parsed.risk, depends:t.parsed.depends, relevance: t.rel.score }));
       const pl: BrainPlan={ id:`brain-plan:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, goal:truncate(params.goal!), tasks: tasksRich, ts:Date.now(), parentId: (params as any).parentId as string | undefined, links: links.length?links:undefined, debateId, score: kept.length? Math.round(kept.reduce((a,b)=>a+b.rel.score,0)/kept.length*10)/10 : undefined };
       if((params as any).done?.length) for(const i of (params as any).done as number[]) if(pl.tasks[i]) pl.tasks[i].done=true;
