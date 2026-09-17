@@ -1,15 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { brain } from "./state";
+import { brain, getBrainMode } from "./state";
 
-// Clean inject — no system-prompt hijack. pi keeps its NATIVE dynamic system prompt
-// (rebuilt from tool registry + skills + loader). We only append a small STATIC flow note
-// to the end of the latest user message on new-task turns:
-//   - static text = KV-cache friendly (byte-identical every turn, no dynamic content)
-//   - plan progress / last think are NOT injected — already visible via their tool results
-// Enforcement (think/plan mandatory blocks, recall optional, 2-consecutive-failure debug,
-// rm -rf guard) lives in hooks.ts — code, not prompt. This note is steering only.
-
-const BRAIN_FLOW_NOTE = (mode: "strict" | "guided") =>
+export const BRAIN_FLOW_NOTE = (mode: "strict" | "guided") =>
   `\n\n[brain:${mode}] happy: [recall?] → think → plan → batch exec → plan done → remember/habit → commit\n` +
   `unhappy: 2 consecutive fails → think{debug} → continue → plan done → remember → commit`;
 
@@ -42,28 +34,22 @@ function lastUserMessage(msgs: any[]): { msg: any; text: string } | null {
 export function registerInjection(pi: ExtensionAPI) {
   pi.on("before_agent_start" as any, async (ev: any, _ctx: any) => {
     const followUp = isFollowUpPrompt(ev?.prompt ?? "");
-    // flags reset only on a NEW task (substantive prompt). Follow-up turns (continue/go/yes)
-    // keep hasRecall/thinkSatisfied/hasPlan sticky so no forced re-recall / re-think mid-task.
     if (!followUp) {
       brain.thinkSatisfied = false;
       brain.hasRecall = false;
       brain.hasWriteEdit = false;
       brain.hasRemember = false;
       brain.rule5Warned = false;
-      (brain as any).hasPlan = false;
+      brain.hasPlan = false;
     }
-    // failureCount persists across turns for 2-continuous detection — do not reset here.
-    // No systemPrompt override, no custom message injection — pi native prompt stays intact.
     return undefined;
   });
 
   pi.on("context" as any, async (ev: any) => {
     const msgs: any[] = ev?.messages ?? ev?.context ?? [];
-    const mode = (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off");
+    const mode = getBrainMode();
     let changed = false;
 
-    // 1) Append static flow note to the LAST user message — new-task turns only, once
-    //    (idempotent marker: skip if the message already carries a [brain: note).
     if (mode === "strict" || mode === "guided") {
       const lu = lastUserMessage(msgs);
       if (lu && !lu.text.includes("[brain:")) {
@@ -77,7 +63,6 @@ export function registerInjection(pi: ExtensionAPI) {
       }
     }
 
-    // 2) clean dedup only for legacy injected brain blocks (nothing new injected today)
     const seen = new Set<string>();
     const deduped = msgs.filter((m: any) => {
       if (m.role !== "system") return true;

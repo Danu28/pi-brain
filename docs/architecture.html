@@ -195,7 +195,7 @@ sort by score desc, then ts desc
   <div class="a-d">▼</div>
   <div class="n c-mem"><b>tools: remember / recall / think / creative-thinking / plan / habit / brain-status</b><span class="s">~260 lines. Only public surface the model sees (reasoning + creativity).</span></div>
   <div class="a-d">▼</div>
-  <div class="n c-sense"><b>events: input · before_agent_start · context · tool_result · session_before_compact · resources_discover · tool_call · before_provider_request (trim) · session_shutdown</b><span class="s">~100 lines. Gates, sculptors, hooks, guards — now with real payload trim + deliberation inject.</span></div>
+  <div class="n c-sense"><b>events: before_agent_start · context · tool_result · tool_call · turn_end · session_start/tree · session_before_compact · session_shutdown</b><span class="s">~100 lines. Gates, sculptors, hooks, guards — now with real payload trim + deliberation inject.</span></div>
   <div class="a-d">▼</div>
   <div class="n c-dim"><b>bus: pi.events emit/on "brain:episode:encoded" · "brain:overload" · "brain:deliberation"</b><span class="s">~6 lines. Corpus callosum — inter-extension decoupling.</span></div>
 </div>
@@ -209,11 +209,11 @@ sort by score desc, then ts desc
 
 <div class="fig"><div class="cap">FIG 2 · encode → store → recall → consolidate loop (hippocampal loop)</div>
 <div class="vflow">
-  <div class="n c-mem"><b>Encode: remember {cue, summary, detail?} → pi.appendEntry + Map.set + pi.events.emit</b><span class="s">Explicit encoding (study). Also auto-encodes every successful <code>edit/write/bash</code> via <code>tool_result</code> (first 200 chars) — lightweight, no LLM call.</span></div>
+  <div class="n c-mem"><b>Encode: remember {cue, summary, detail?} → pi.appendEntry + Map.set + pi.events.emit</b><span class="s">Explicit encoding only — <code>tool_result</code> sets flags (<code>hasWriteEdit</code>) but never auto-creates episodes. Model must call <code>remember</code>.</span></div>
   <div class="a-d">▼<span>durable entry, TUI renderer shows collapsed cue</span></div>
   <div class="n c-pi"><b>Before each turn: before_agent_start injects 3 most recent episodes</b><span class="s">PFC working memory analog — <code>{message:{role:"system", content:"Recent brain episodes:\n- cue: summary"}}</code>. Only if episodes exist; no provisional empty inject.</span></div>
   <div class="a-d">▼</div>
-  <div class="n c-sense"><b>During turn: input gate + context prune</b><span class="s"><code>input</code> normalizes <code>@path</code> (thalamus routing). <code>context</code> keeps system + last 20 if &gt;40 msgs (synaptic pruning — drop low-value toolResults).</span></div>
+  <div class="n c-sense"><b>During turn: input gate + context prune</b><span class="s"><code>context</code> appends one static <code>[brain:mode]</code> note to the latest user message (idempotent) and dedups legacy brain blocks. No 40→20 prune — pi handles context window.</span></span></div>
   <div class="a-d">▼<span>on demand</span></div>
   <div class="n c-mem"><b>Recall: recall {query, limit?} → O(n) scored ranking → truncated text + details.episodes</b><span class="s">Cue 2×, summary 1×, detail 0.5×; recency tie-break; fallback to recency if no score &gt;0. Lazy — no index at startup.</span></div>
   <div class="a-d">▼<span>offline, like sleep</span></div>
@@ -224,17 +224,17 @@ sort by score desc, then ts desc
 <h3>Event wiring detail</h3>
 <div class="twrap"><table class="tbl">
 <tr><th>Event</th><th>Brain analog</th><th>What it does</th></tr>
-<tr><td><code>session_start</code></td><td>Waking recall</td><td>Rebuild <code>Map</code> from branch; handles both entry + toolResult shapes</td></tr>
+<tr><td><code>session_start</code></td><td>Waking recall</td><td>Rebuild from <code>pi-brain-memory.json</code> sidecar + branch (<code>type:custom</code>); <code>readMode()</code> file wins; rebuild index</td></tr>
 <tr><td><code>input</code></td><td>Thalamus gate</td><td>Normalize <code>@path</code> → <code>{action:"transform"}</code>; else continue</td></tr>
-<tr><td><code>before_agent_start</code></td><td>PFC working memory</td><td>Inject 3 recent episodes as system message</td></tr>
-<tr><td><code>context</code></td><td>Synaptic pruning</td><td>Keep system + last 20 if &gt;40; drop low-value history (cheap tokens ≈ watts)</td></tr>
-<tr><td><code>tool_result</code> (auto-encode)</td><td>Hippocampal encoding</td><td>On <code>edit/write/bash</code> success, append episode (cue=tool:arg, summary=200 chars)</td></tr>
-<tr><td><code>tool_result</code> (patch)</td><td>Anterior cingulate</td><td>On <code>bash</code> error, append hint <code>[ brain: consider recall before retry ]</code></td></tr>
+<tr><td><code>before_agent_start</code></td><td>Task gate</td><td>Reset <code>thinkSatisfied/hasPlan/hasRecall/hasWriteEdit/hasRemember/rule5Warned</code> on new-task prompts only (follow-ups keep sticky); <code>failureCount</code> persists</td></tr>
+<tr><td><code>context</code></td><td>Static steering</td><td>Append <code>BRAIN_FLOW_NOTE</code> (~90 chars, byte-identical) to last user message; dedup legacy <code>Recent deliberations:</code> blocks</td></tr>
+<tr><td><code>tool_result</code> (flags)</td><td>Flag gate</td><td>On <code>edit/write</code> success set <code>hasWriteEdit</code>; on <code>recall</code> set <code>hasRecall</code>; consecutive <code>write/edit/bash</code> failures (2) trigger <code>needsDebugThink</code></td></tr>
+<tr><td><code>tool_result</code> (failure)</td><td>Cingulate monitor</td><td>On <code>write/edit/bash</code> error append in-result hint <code>[ brain: failure 1/2 ]</code>; on 2nd consecutive emit <code>brain:block</code> (strict) or <code>brain:nudge</code> (guided) + UI notify</td></tr>
 <tr><td><code>session_before_compact</code></td><td>Sleep replay</td><td>Inject <code>Brain episodes:\n- cue: summary</code> + original summary</td></tr>
-<tr><td><code>resources_discover</code></td><td>Cerebellum skill store</td><td>Contribute <code>brain-*</code> habit paths (progressive disclosure)</td></tr>
+<tr><td><code>resources_discover</code></td><td>—</td><td>Deleted — <code>.pi/skills</code> auto-discovered by pi, no handler needed</td></tr>
 <tr><td><code>tool_call</code></td><td>Amygdala guard</td><td>Block <code>rm -rf</code> unless <code>ctx.ui.confirm</code>; needs <code>hasUI</code> else auto-block</td></tr>
-<tr><td><code>before_provider_request</code></td><td>Cerebellar prediction</td><td>Real trim: if JSON >30KB keep system + last 25 (was void ev)</td></tr>
-<tr><td><code>session_shutdown</code></td><td>—</td><td>Idempotent no-op; entries already durable, no flush needed</td></tr>
+<tr><td><code>before_provider_request</code></td><td>—</td><td>Deleted — context prune handled only via static note + compaction; no payload trim (KV-cache stable)</td></tr>
+<tr><td><code>session_shutdown</code></td><td>Persist</td><td>Async <code>saveMemory()</code> — sidecar flushed with <code>withFileMutationQueue</code> (compaction-safe)</td></tr>
 <tr><td><code>pi.events</code></td><td>Corpus callosum</td><td><code>brain:episode:encoded</code> emit; siblings can <code>on</code> without coupling</td></tr>
 </table></div>
 
@@ -293,9 +293,8 @@ habit { name:"pr-review",
 brain-status {} → Episodes: 12
                Tokens: 8420 / 128000
 
-// auto-encode happens without calling remember:
-//   edit/write/bash success → brain:episode auto-appended
-//   bash error → hint "consider recall before retry"
+// explicit: edit/write/bash success sets flags only — call remember to persist
+//   2 consecutive failures → debug-think gate
 //   rm -rf → confirm dialog via tool_call guard</pre>
 <pre class="code"># manual habit path discovery
 ls .pi/skills/brain-*/SKILL.md
@@ -312,7 +311,7 @@ cat .pi/skills/brain-pr-review/SKILL.md</pre>
 <li><b>Cache:</b> all tools are <code>promptSnippet</code>-free → system prompt prefix stays stable, provider cache hits.</li>
 </ul>
 
-<div class="box warn"><b class="h">Calibration knob</b> Truncation limits (<code>MAX_BYTES</code>/<code>MAX_LINES</code>) and prune threshold (40 msgs → keep 20) are plain constants at top of <code>index.ts</code> — tune like myelination thickness for your provider/context window. Minimal model, knob stays.</div>
+<div class="box warn"><b class="h">Calibration knob</b> Knobs live in <code>src/knobs.ts</code> + <code>pi-brain.knobs.json</code> override (cwd or <code>$PI_CODING_AGENT_DIR</code>) — tune without rebuilding. Prune cap 40, truncate 50KB/2K.</div></div>
 </section>
 
 <!-- ============ S4 ============ -->
@@ -328,7 +327,7 @@ cat .pi/skills/brain-pr-review/SKILL.md</pre>
   <div class="card"><h4>4 · Sparse &amp; energy-efficient → sparse activation + truncate</h4><p>Only 3 recent injected, top 5 in compaction, ranked recall; 50KB/2K ceiling beats GPU watts-per-inference.</p></div>
   <div class="card"><h4>5 · Associative memory → recall (BM25/substring)</h4><p>Partial cue retrieves whole episode; no index lookup — pattern completes via score + recency.</p></div>
   <div class="card"><h4>6 · Consolidation during rest → session_before_compact</h4><p>Hippocampus replays top 5 at compact; cortex (prompt) slowly absorbs. Offline, lossy → generalization (feature).</p></div>
-  <div class="card"><h4>7 · Embodied &amp; grounded → edit/write/bash auto-encode</h4><p>Cognition coupled to motor output; every successful effector leaves an engram without explicit remember.</p></div>
+  <div class="card"><h4>7 · Embodied &amp; grounded → explicit remember</h4><p>Effectors set flags only; model must call <code>remember</code> — no hidden engram. 2nd repeat hints <code>habit</code>.</p></div>
   <div class="card"><h4>8 · Metacognition → brain-status + cingulate patch</h4><p>Watches itself: <code>getContextUsage</code> reports load; error monitor appends recall hint; knows when it doesn't know.</p></div>
 </div>
 
@@ -336,15 +335,15 @@ cat .pi/skills/brain-pr-review/SKILL.md</pre>
 <div class="twrap"><table class="tbl">
 <tr><th>Brain principle</th><th>Pi mechanism</th><th>Code location</th></tr>
 <tr><td>Neocortical hierarchy (6 layers)</td><td>Stacked handlers</td><td><code>input</code> → <code>before_agent_start</code> → <code>context</code> → <code>before_provider_request</code></td></tr>
-<tr><td>Thalamus (sensory gate)</td><td><code>input</code> event</td><td><code>input</code> handler: <code>{action:"transform"|"continue"}</code></td></tr>
-<tr><td>Attention (parietal+frontal)</td><td><code>context</code> + compaction</td><td><code>context</code> prune + <code>session_before_compact</code></td></tr>
+<tr><td>Task reset</td><td><code>before_agent_start</code></td><td>New-task detection via <code>isFollowUpPrompt()</code> — sticky flags mid-task</td></tr>
+<tr><td>Steering (frontal)</td><td><code>context</code> static note</td><td>KV-stable append + legacy dedup</td></tr>
 <tr><td>Hippocampus (encode→consolidate)</td><td><code>pi.appendEntry</code> + <code>recall</code></td><td><code>remember</code> + <code>recall</code> tools, branch rebuild</td></tr>
 <tr><td>Associative recall</td><td><code>recall</code> grep</td><td><code>scoreEpisode()</code> + <code>recall</code> tool</td></tr>
 <tr><td>Basal ganglia (action selection)</td><td><code>getActiveTools/setActiveTools</code> (deferred)</td><td>Keep tools snippet-free for additive loader if needed</td></tr>
 <tr><td>Cerebellum (habit)</td><td>Skills via <code>resources_discover</code></td><td><code>habit</code> tool + <code>resources_discover</code></td></tr>
-<tr><td>Motor cortex (act)</td><td><code>edit/write/bash</code> auto-encode</td><td><code>tool_result</code> hook, no <code>withFileMutationQueue</code> (append-only)</td></tr>
+<tr><td>Motor cortex (act)</td><td>flags only</td><td><code>tool_result</code> sets <code>hasWriteEdit/hasRemember</code> + failureCount — no hidden writes</td></tr>
 <tr><td>Myelination (accelerate)</td><td>Caching + truncate</td><td>50KB/2K + snippet-free + context prune</td></tr>
-<tr><td>Cingulate (error monitor)</td><td><code>tool_result</code> patch</td><td>bash error → <code>[ brain: consider recall …]</code></td></tr>
+<tr><td>Cingulate (error monitor)</td><td><code>tool_result</code> + <code>tool_call</code> guards</td><td>2-failure debug gate + <code>rm -rf</code> confirm; <code>turn_end</code> Rule-5 nudge</td></tr>
 <tr><td>Corpus callosum (integration)</td><td><code>pi.events</code> bus</td><td><code>emit("brain:episode:encoded")</code></td></tr>
 <tr><td>Sleep replay (consolidation)</td><td><code>session_before_compact</code></td><td>Top 5 episodes + original summary</td></tr>
 </table></div>

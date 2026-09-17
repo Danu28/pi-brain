@@ -1,0 +1,12 @@
+{
+  "deploy": ["deploy","ship","release","publish"],
+  "bug": ["bug","fix","error","issue","fail"],
+  "auth": ["auth","login","signin","credential"],
+  "perf": ["perf","performance","speed","slow","latency"],
+  "cache": ["cache","memo","store"],
+  "test": ["test","spec","pytest","jest","vitest"],
+  "build": ["build","compile","bundle"],
+  "cold": ["cold","start","init","boot"],
+  "db": ["db","database","store","storage"],
+  "ui": ["ui","frontend","interface","view"]
+}

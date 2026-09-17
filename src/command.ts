@@ -1,31 +1,29 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { setFooter } from "./footer";
-import { brain, saveMemory, writeMode } from "./state";
+import { brain, getBrainMode, saveMemory, writeMode } from "./state";
 
 export function registerCommand(pi: ExtensionAPI) {
-  // /pi-brain command — strict=block, guided=nudge, off=disabled
   pi.registerCommand("pi-brain", {
     description: "Toggle brain mode: /pi-brain strict (block) | /pi-brain guided (nudge) | /pi-brain off | /pi-brain status",
     getArgumentCompletions: (prefix: string) => {
-      const opts = ["strict", "guided", "off", "status", "on"];
+      const opts = ["strict", "guided", "off", "status", "on", "help"];
       const f = opts.filter((o) => o.startsWith(prefix.toLowerCase()));
       return f.length ? f.map((v) => ({ value: v, label: v })) : null;
     },
     handler: async (args: string, ctx: any) => {
       const arg = args.trim().toLowerCase();
       const persist = async (mode: "strict" | "guided" | "off") => {
-        (brain as any).brainMode = mode;
-        brain.brainStrict = mode === "strict";
-        (brain as any).failureCount = 0;
+        brain.brainMode = mode;
+        (brain as any).brainStrict = mode === "strict"; // compat shim for tests/docs
+        brain.failureCount = 0;
         brain.thinkSatisfied = false;
         brain.hasRecall = false;
         brain.needsDebugThink = false;
-        brain.needsPlanUpdate = false;
         brain.hasWriteEdit = false;
         brain.hasRemember = false;
-        (brain as any).hasPlan = false;
+        brain.hasPlan = false;
         writeMode(mode as any);
-        saveMemory(); // keep the sidecar snapshot in sync with the toggle
+        await saveMemory();
         await (pi as any).appendEntry?.("brain:mode", { mode, enabled: mode === "strict", ts: Date.now() });
         setFooter(pi, ctx, mode === "strict");
         (pi as any).events?.emit?.("brain:mode", { mode, enabled: mode === "strict" });
@@ -45,10 +43,10 @@ export function registerCommand(pi: ExtensionAPI) {
         ctx.ui.notify("pi-brain: OFF — default pi behavior restored.", "info");
         return;
       }
-      if (arg === "status" || arg === "") {
-        const mode = (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off");
-        const fc = (brain as any).failureCount ?? 0;
-        const txt = `pi-brain: ${mode.toUpperCase()} (strict=block, guided=nudge, off=disabled)\nEpisodes: ${brain.episodes.size} | Deliberations: ${brain.deliberations.length} | Index: ${brain.tokenIndex.size} tokens | failures: ${fc}/2\nUsage: /pi-brain strict | /pi-brain guided | /pi-brain off | /pi-brain status`;
+      if (arg === "status" || arg === "" || arg === "help") {
+        const mode = getBrainMode();
+        const fc = brain.failureCount ?? 0;
+        const txt = `pi-brain: ${mode.toUpperCase()} (strict=block, guided=nudge, off=disabled)\nEpisodes: ${brain.episodes.size} | Deliberations: ${brain.deliberations.length} | Index: ${brain.tokenIndex.size} tokens | failures: ${fc}/2\nUsage: /pi-brain strict | /pi-brain guided | /pi-brain off | /pi-brain status (help)`;
         ctx.ui.notify(txt, "info");
         return;
       }

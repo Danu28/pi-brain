@@ -15,5 +15,5 @@ export default function (pi: ExtensionAPI) {
   registerTools(pi);           // remember / recall / think / creative-thinking / plan / habit / brain-status
   registerCommand(pi);         // /pi-brain on|off|status
   registerInjection(pi);       // before_agent_start (strict/default inject) + context dedup
-  registerHooks(pi);           // tool_result auto-encode + tool_call guards + turn_end nudge
+  registerHooks(pi);           // tool_result flags + tool_call guards + turn_end nudge
 }

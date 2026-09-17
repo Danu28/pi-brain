@@ -1,13 +1,24 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, MAX_BYTES, MAX_LINES, PRUNE_CAP, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, PRUNE_CAP, REMEMBER_BOOST, TAG_BOOST, truncate } from "./knobs";
 import { brain, isVerbose } from "./state";
 import type { BrainEpisode } from "./types";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+export { truncate };
+
 export function tokenize(s: string): string[] {
   try { return s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean); } catch { return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
+}
+const tokenizeCache = new Map<string, string[]>();
+export function tokenizeCached(s: string): string[] {
+  let hit = tokenizeCache.get(s);
+  if (hit) return hit;
+  hit = tokenize(s);
+  if (tokenizeCache.size > 64) tokenizeCache.clear();
+  tokenizeCache.set(s, hit);
+  return hit;
 }
 export function normalizeTags(tags?: string[]): string[] | undefined {
   if (!tags?.length) return undefined;
@@ -24,27 +35,13 @@ export function parseSince(since?: string | number): number | undefined {
   const parsed = Date.parse(s);
   return isNaN(parsed) ? undefined : parsed;
 }
-const SYN: Record<string, string[]> = {
-  deploy: ["deploy","ship","release","publish"], bug: ["bug","fix","error","issue","fail"],
-  auth: ["auth","login","signin","credential"], perf: ["perf","performance","speed","slow","latency"],
-  cache: ["cache","memo","store"], test: ["test","spec","pytest","jest","vitest"],
-  build: ["build","compile","bundle"], cold: ["cold","start","init","boot"],
-  db: ["db","database","store","storage"], ui: ["ui","frontend","interface","view"],
-};
-function loadSyn(p:string){ try{ Object.assign(SYN, JSON.parse(readFileSync(p,"utf8"))); }catch{} }
+const SYN: Record<string, string[]> = {};
+function loadSyn(p:string){ try{ const j=JSON.parse(readFileSync(p,"utf8")); if(j && typeof j==="object") Object.assign(SYN, j); }catch{} }
+// file-only SYN — defaults shipped as pi-brain.syn.json in repo; user overrides via cwd / agent dir
 loadSyn(join(process.cwd(),"pi-brain.syn.json"));
 loadSyn(join(homedir(),".pi","agent","pi-brain.syn.json"));
-export function truncate(text: string): string {
-  if (!text) return text;
-  const lines = text.split("\n");
-  if (lines.length > MAX_LINES) text = lines.slice(0, MAX_LINES).join("\n") + `\n[truncated ${lines.length - MAX_LINES} lines]`;
-  const byteLen = typeof Buffer !== "undefined" ? Buffer.byteLength(text, "utf8") : new TextEncoder().encode(text).length;
-  if (byteLen > MAX_BYTES) {
-    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "") + "\n[truncated to 50KB]";
-    else text = text.slice(0, MAX_BYTES) + "\n[truncated to 50KB]";
-  }
-  return text;
-}
+// also try package-local fallback (when cwd is test sandbox)
+try { loadSyn(join(__dirname, "../pi-brain.syn.json")); } catch {}
 
 export function expandTokens(toks: string[]): string[] {
   const out = new Set<string>();
@@ -92,33 +89,54 @@ export function formatRelevance(score: number): string {
   return `${score.toFixed(1)}/10 ${pct}% ${bar} ${relevanceLabel(score)}`;
 }
 
-// Enhanced debate: rubric 0-10 cost/risk/reversibility/relevance → time-travel + auto-prune
-// Parse "side | cost:3 risk:2 rev:9 | argues" or plain argues string
+// Single-pass rubric parser — one regex covers cost/risk/rev any order, any pipe layout
+const RUBRIC_RE = /(cost|risk|rev(?:ersibility)?)\s*:\s*(\d{1,2})/gi;
 export function parseDebater(hyp: string): { side: string; argues: string; cost?: number; risk?: number; reversibility?: number } {
-  const parts = hyp.split("|").map(s=>s.trim());
-  if (parts.length >= 2) {
-    const side = parts[0] || hyp.slice(0,30);
-    let argues = parts[parts.length-1] || hyp;
-    let cost: number | undefined, risk: number | undefined, reversibility: number | undefined;
-    const mid = parts.slice(1, -1).join(" ").toLowerCase() + " " + (parts.length===2? "" : "");
-    // also check side part for rubric? simpler: scan whole hyp for cost:/risk:/rev:
-    const scan = hyp.toLowerCase();
-    const c = scan.match(/cost\s*:\s*(\d{1,2})/); if (c) cost = Math.max(0, Math.min(10, Number(c[1])));
-    const r = scan.match(/risk\s*:\s*(\d{1,2})/); if (r) risk = Math.max(0, Math.min(10, Number(r[1])));
-    const v = scan.match(/(?:rev|reversibility)\s*:\s*(\d{1,2})/); if (v) reversibility = Math.max(0, Math.min(10, Number(v[1])));
-    // if pipe format, argues is last part without rubric
-    if (parts.length===3) argues = parts[1].includes("cost") || parts[1].includes("risk") ? parts[2] : argues;
-    return { side, argues, cost, risk, reversibility };
+  const parts = hyp.split("|").map(s=>s.trim()).filter(Boolean);
+  let side: string;
+  let argues: string;
+  if (parts.length === 0) return { side: hyp.slice(0,40), argues: hyp };
+  if (parts.length === 1) {
+    // no pipe — plain argues
+    const m = [...hyp.matchAll(RUBRIC_RE)];
+    let cost: number|undefined, risk: number|undefined, reversibility: number|undefined;
+    for (const [,k,v] of m) {
+      const n = Math.max(0, Math.min(10, Number(v)));
+      if (k.toLowerCase()==="cost") cost=n; else if(k.toLowerCase()==="risk") risk=n; else reversibility=n;
+    }
+    return { side: hyp.slice(0,40), argues: hyp, cost, risk, reversibility };
   }
-  return { side: hyp.slice(0,40), argues: hyp };
+  side = parts[0] || hyp.slice(0,30);
+  // find which parts are rubric vs argues: rubrics contain cost/risk/rev
+  const rubricParts: string[] = [];
+  let arguesParts: string[] = [];
+  for (let i=1;i<parts.length;i++) {
+    if (/cost\s*:|risk\s*:|rev(?:ersibility)?\s*:/i.test(parts[i])) rubricParts.push(parts[i]);
+    else arguesParts.push(parts[i]);
+  }
+  if (!arguesParts.length) arguesParts = [parts[parts.length-1]];
+  argues = arguesParts.join(" | ");
+  const scan = rubricParts.join(" ") + " " + hyp;
+  let cost: number|undefined, risk: number|undefined, reversibility: number|undefined;
+  for (const [,k,v] of scan.toLowerCase().matchAll(RUBRIC_RE) as any) {
+    const n = Math.max(0, Math.min(10, Number(v)));
+    const lk = k.toLowerCase();
+    if (lk==="cost") cost=n; else if(lk==="risk") risk=n; else reversibility=n;
+  }
+  // dedupe: re-scan whole hyp to catch rubric before first pipe too
+  const full: any = [...hyp.toLowerCase().matchAll(RUBRIC_RE)];
+  for (const [,k,v] of full) {
+    const n = Math.max(0, Math.min(10, Number(v)));
+    const lk = k.toLowerCase();
+    if (lk==="cost" && cost===undefined) cost=n; else if(lk==="risk" && risk===undefined) risk=n; else if(lk.startsWith("rev") && reversibility===undefined) reversibility=n;
+  }
+  return { side, argues, cost, risk, reversibility };
 }
 export function rubricForHypothesis(hyp: string, relevance: number): { cost: number; risk: number; reversibility: number; relevance: number; avg: number } {
   const p = parseDebater(hyp);
-  // heuristic defaults if not provided: cost 5, risk 5, rev 8 (reversible)
   const cost = p.cost ?? 5;
   const risk = p.risk ?? 5;
   const reversibility = p.reversibility ?? 8;
-  // avg favors relevance + reversibility + low cost + low risk
   const avg = Math.round(((relevance + (10 - cost) + (10 - risk) + reversibility) / 4) * 10) / 10;
   return { cost, risk, reversibility, relevance, avg };
 }
@@ -132,7 +150,6 @@ export function parsePlanTask(raw: string): { title: string; refs?: string[]; ch
   const parts = raw.split("|").map(s=>s.trim());
   const title = parts[0] || raw;
   let refs: string[] | undefined, check: string | undefined, estimate: string | undefined, risk: number | undefined, depends: number[] | undefined;
-  const tail = parts.slice(1).join(" | ").toLowerCase();
   const refsM = raw.match(/refs?\s*:\s*([^|]+)/i); if (refsM) refs = refsM[1].split(/[,\s]+/).map(s=>s.trim()).filter(Boolean).slice(0,5);
   const checkM = raw.match(/check\s*:\s*([^|]+)/i); if (checkM) check = checkM[1].trim();
   const estM = raw.match(/estimate\s*:\s*([^|]+)/i); if (estM) estimate = estM[1].trim(); else {
@@ -140,7 +157,6 @@ export function parsePlanTask(raw: string): { title: string; refs?: string[]; ch
   }
   const riskM = raw.match(/risk\s*:\s*(\d{1,2})/i); if (riskM) risk = Math.max(0, Math.min(10, Number(riskM[1])));
   const depM = raw.match(/depends?\s*:\s*([^|]+)/i); if (depM) depends = depM[1].split(/[,\s]+/).map(s=>s.trim()).filter(Boolean).map(n=>Number(n)).filter(n=>!isNaN(n));
-  // also detect bare refs like src/xxx.ts in title
   if (!refs) {
     const fileM = title.match(/(src\/[^\s,]+\.ts|\.pi\/[^\s]+)/g);
     if (fileM) refs = fileM.slice(0,3);
@@ -148,10 +164,10 @@ export function parsePlanTask(raw: string): { title: string; refs?: string[]; ch
   return { title: title.split(/\s+refs?:/i)[0].split(/\s+check:/i)[0].trim(), refs, check, estimate, risk, depends };
 }
 export function scoreBase(e: BrainEpisode, query: string, filterTags?: string[]): number {
-  const terms = tokenize(query); const expanded = expandTokens(terms);
+  const terms = tokenizeCached(query); const expanded = expandTokens(terms);
   const hasQuery = terms.length > 0 || query.trim().length > 0;
   const qLower = query.toLowerCase().trim(); let s = 0;
-  const cueToks = tokenize(e.cue), sumToks = tokenize(e.summary), detToks = tokenize(e.detail ?? "");
+  const cueToks = tokenizeCached(e.cue), sumToks = tokenizeCached(e.summary), detToks = tokenizeCached(e.detail ?? "");
   if (qLower && e.cue.toLowerCase().includes(qLower)) s += 2;
   if (qLower && e.summary.toLowerCase().includes(qLower)) s += 1;
   for (const t of expanded) { s += cueToks.filter(x=>x===t).length*2; s += sumToks.filter(x=>x===t).length*1; s += detToks.filter(x=>x===t).length*0.5; }
@@ -174,6 +190,13 @@ export function scoreEpisode(e: BrainEpisode, query: string, filterTags?: string
   const ageDays = Math.max(0,(Date.now()-e.ts)/86400000);
   return base * Math.pow(HALF_LIFE_FACTOR, ageDays/HALF_LIFE_DAYS) * sourceBoost(e);
 }
+export function scoreBreakdown(e: BrainEpisode, query: string, filterTags?: string[]): { base:number; ageDays:number; halfLife:number; sourceBoost:number; final:number } {
+  const base = scoreBase(e, query, filterTags);
+  const ageDays = Math.max(0,(Date.now()-e.ts)/86400000);
+  const halfLife = Math.pow(HALF_LIFE_FACTOR, ageDays/HALF_LIFE_DAYS);
+  const sb = sourceBoost(e);
+  return { base, ageDays: Math.round(ageDays*10)/10, halfLife: Math.round(halfLife*100)/100, sourceBoost: sb, final: Math.round(base*halfLife*sb*10)/10 };
+}
 export function avgIdf(terms: string[]): number {
   const N = brain.episodes.size; if (!terms.length) return 1;
   return terms.reduce((a,t)=>a+Math.log((N+1)/((brain.tokenIndex.get(t)?.size??0)+1))+1,0)/terms.length;
@@ -186,32 +209,37 @@ export function planTaskError(tasks: string[]): string | undefined {
   if (short.length) return `plan tasks must be detailed (≥10 chars each) — short: "${short[0].slice(0,30)}" — make each concrete and actionable (what file, what change)`;
   return undefined;
 }
-function toksFor(e: BrainEpisode): Set<string> { return new Set([...tokenize(e.cue), ...tokenize(e.summary), ...tokenize(e.detail??""), ...(e.tags??[]).map(t=>t.toLowerCase())]); }
-export function indexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) { let set=brain.tokenIndex.get(tok); if(!set){ set=new Set(); brain.tokenIndex.set(tok,set); } set.add(e.id); } }
-export function unindexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) { const set=brain.tokenIndex.get(tok); if(set){ set.delete(e.id); if(set.size===0) brain.tokenIndex.delete(tok); } } }
-export function rebuildIndex(){ brain.tokenIndex.clear(); for(const e of brain.episodes.values()) indexEpisode(e); }
+function toksFor(e: BrainEpisode): Set<string> { return new Set([...tokenizeCached(e.cue), ...tokenizeCached(e.summary), ...tokenizeCached(e.detail??""), ...(e.tags??[]).map(t=>t.toLowerCase())]); }
+export function indexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) { let set=brain.tokenIndex.get(tok); if(!set){ set=new Set(); brain.tokenIndex.set(tok,set); } set.add(e.id); } brain.memoGen++; brain.recallMemo.clear(); }
+export function unindexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) { const set=brain.tokenIndex.get(tok); if(set){ set.delete(e.id); if(set.size===0) brain.tokenIndex.delete(tok); } } brain.memoGen++; brain.recallMemo.clear(); }
+export function rebuildIndex(){ brain.tokenIndex.clear(); brain.memoGen++; brain.recallMemo.clear(); for(const e of brain.episodes.values()) indexEpisode(e); }
 export function pruneExpired(pi: ExtensionAPI): number {
   const now=Date.now(); let n=0;
   const evicted: string[] = [];
+  let evictedRemember = false;
   for(const [id,e] of brain.episodes) if(e.expiresAt&&e.expiresAt<now){ unindexEpisode(e); brain.episodes.delete(id); n++; evicted.push(id); }
-  if(n) brain.recallMemo.clear();
   while(brain.episodes.size>PRUNE_CAP){
     const sorted=[...brain.episodes.values()].sort((a,b)=>a.ts-b.ts);
     const oldest=sorted.find(e=>e.source==="auto")??sorted[0]; if(!oldest) break;
+    if(oldest.source!=="auto") evictedRemember=true;
     if(oldest.source!=="auto") (pi as any).events?.emit?.("brain:overload",{evictRemember:oldest.cue,size:brain.episodes.size});
-    unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; evicted.push(oldest.id); brain.recallMemo.clear();
+    unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; evicted.push(oldest.id);
   }
-  if (n) { brain.stats.prune += n; (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5) }); if (isVerbose()) try { (pi as any).events?.emit?.("brain:verbose", `prune ${n} → ${brain.episodes.size} left`); } catch {} }
+  if (n) { brain.stats.prune += n; (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5), evictedRemember }); if (evictedRemember && isVerbose()) try{ (pi as any).events?.emit?.("brain:verbose", `prune evicted remember ${evicted[0]} → ${brain.episodes.size} left`);}catch{}
+    // verbose prune toast is handled by caller via isVerbose check; no duplicate emit
+  }
   return n;
 }
 export function candidatePool(query: string): BrainEpisode[] {
-  const qToks=expandTokens(tokenize(query));
+  const qToks=expandTokens(tokenizeCached(query));
   if(qToks.length&&brain.tokenIndex.size){
     const idSets=qToks.map(t=>brain.tokenIndex.get(t)).filter(Boolean) as Set<string>[];
     if(idSets.length){
       const ids=new Set<string>(); for(const s of idSets) for(const id of s) ids.add(id);
       const hits=[...ids].map(id=>brain.episodes.get(id)).filter(Boolean) as BrainEpisode[];
       if(hits.length) return hits;
+      // index miss: fast path — avoid scoring all 40 when we already know no token hit
+      if (brain.episodes.size > 10) return [];
     }
   }
   return [...brain.episodes.values()];

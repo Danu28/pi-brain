@@ -6,12 +6,8 @@ export const MODE_FILE = join(process.env.PI_CODING_AGENT_DIR || join(homedir(),
 export type BrainMode = "strict" | "guided" | "off";
 export function readMode(): BrainMode | undefined { try { const v = JSON.parse(readFileSync(MODE_FILE, "utf8")); if (typeof v?.mode === "string" && ["strict","guided","off"].includes(v.mode)) return v.mode as BrainMode; if (typeof v?.enabled === "boolean") return v.enabled ? "strict" : "off"; return undefined; } catch { return undefined; } }
 export function writeMode(mode: BrainMode | boolean) { try { const m: BrainMode = typeof mode === "boolean" ? (mode ? "strict" : "off") : mode; mkdirSync(dirname(MODE_FILE), { recursive: true }); writeFileSync(MODE_FILE, JSON.stringify({ mode: m, enabled: m === "strict", ts: Date.now() }), "utf8"); } catch {} }
-export function getBrainMode(): BrainMode { return (brain as any).brainMode ?? (brain.brainStrict ? "strict" : "off"); }
+export function getBrainMode(): BrainMode { const m=(brain as any).brainMode as BrainMode|undefined; if(m) return m; const legacy=(brain as any).brainStrict as boolean|undefined; if(legacy) return "strict"; return "off"; }
 
-// Durable sidecar store (branch-agnostic, compaction-safe). Custom entries only render in the
-// TUI and are dropped from the session behind the compaction boundary, so episodes/plans are
-// ALSO persisted to $PI_CODING_AGENT_DIR/pi-brain-memory.json on every mutation and re-loaded
-// on session_start/session_tree. Mode stays governed by MODE_FILE (file wins).
 export function memoryFilePath(): string {
   return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain-memory.json");
 }
@@ -20,55 +16,58 @@ export function loadMemory(): void {
     const v = JSON.parse(readFileSync(memoryFilePath(), "utf8"));
     if (Array.isArray(v?.episodes)) for (const e of v.episodes) if (e?.id) brain.episodes.set(e.id, e as BrainEpisode);
     if (Array.isArray(v?.plans)) for (const p of v.plans) if (p?.id && Array.isArray(p.tasks)) brain.plans.set(p.id, p as BrainPlan);
+    if (Array.isArray(v?.compactionKept)) brain.lastCompactionKept = v.compactionKept as string[];
   } catch {}
 }
-export function saveMemory(): boolean {
+// Async save with file-mutation queue when available; falls back to sync so tests without the queue still persist.
+let saveChain: Promise<void> = Promise.resolve();
+export async function saveMemory(): Promise<boolean> {
+  const payload = JSON.stringify({ episodes: [...brain.episodes.values()], plans: [...brain.plans.values()], mode: getBrainMode(), compactionKept: brain.lastCompactionKept, ts: Date.now() });
+  const doWrite = async () => {
+    try { mkdirSync(dirname(memoryFilePath()), { recursive: true }); writeFileSync(memoryFilePath(), payload, "utf8"); return true; } catch { return false; }
+  };
   try {
-    mkdirSync(dirname(memoryFilePath()), { recursive: true });
-    writeFileSync(memoryFilePath(), JSON.stringify({ episodes: [...brain.episodes.values()], plans: [...brain.plans.values()], mode: getBrainMode(), ts: Date.now() }), "utf8");
-    return true;
-  } catch { return false; }
+    const { withFileMutationQueue } = await import("@earendil-works/pi-coding-agent");
+    if (typeof withFileMutationQueue === "function") {
+      const p = saveChain.then(() => withFileMutationQueue(memoryFilePath(), doWrite));
+      saveChain = p.then(()=>{}, ()=>{});
+      return await p as boolean;
+    }
+  } catch {}
+  return doWrite();
+}
+export function saveMemorySync(): boolean {
+  try { mkdirSync(dirname(memoryFilePath()), { recursive: true }); writeFileSync(memoryFilePath(), JSON.stringify({ episodes: [...brain.episodes.values()], plans: [...brain.plans.values()], mode: getBrainMode(), ts: Date.now() }), "utf8"); return true; } catch { return false; }
 }
 
-// Module-singleton brain state. pi loads an extension once per process, so a
-// module singleton (plus resetBrain() on session_start) preserves the original
-// "one factory, one Map" behavior — branch-safe waking, no class/DI.
 export function isVerbose(): boolean { return process.env.PI_BRAIN_VERBOSE === "1" || process.env.PI_BRAIN_TRACE === "1"; }
 
 export const brain = {
-  // hippocampus — durable, branch-scoped
   episodes: new Map<string, BrainEpisode>(),
-  // incremental token → ids index (O(1) recall, rebuilt on session_start)
   tokenIndex: new Map<string, Set<string>>(),
-  // PFC scratchpad — deliberations (not durable, per-turn working memory)
   deliberations: [] as Deliberation[],
-  // /pi-brain mode gate — branch-durable, defaults off: strict=block, guided=nudge, off=disabled
   brainMode: "off" as BrainMode,
-  brainStrict: false, // legacy mirror for compat (true when mode==="strict")
-  failureCount: 0, // consecutive write/edit/bash failures — 2 continuous triggers think
-  // strict workflow enforcement (per-agent run) — clean: explicit recall/think flags, no hidden auto-encode
+  failureCount: 0,
   thinkSatisfied: false,
   hasRecall: false,
   hasWriteEdit: false,
   hasRemember: false,
-  hasPlan: false, // think+plan mandatory (strict): plan tool success sets this
+  hasPlan: false,
+  // legacy compat shim — tests still set brain.brainStrict; kept as alias to brainMode but not read via getBrainMode fallback for perf
+  brainStrict: false as any,
+  needsPlanUpdate: false as any,
   rule5Warned: false,
-  needsDebugThink: false, // unhappy path: 2 continuous failures → must think before retry
-  needsPlanUpdate: false, // deprecated — kept for compat, not used as hard block
+  needsDebugThink: false,
   cachedLatestPlan: null as BrainPlan | null,
-  // plan — ordered tasklist after think
   plans: new Map<string, BrainPlan>(),
-  // T9 recall memo
-  recallMemo: new Map<string, { ts: number; ranked: BrainEpisode[]; text: string }>(),
+  recallMemo: new Map<string, { ts: number; ranked: BrainEpisode[]; text: string; gen: number }>(),
   memoHits: 0,
   memoMisses: 0,
-  // Tier 2 verbose counters — always incremented, surfaced in brain-status and via verbose notify
+  memoGen: 0,
+  lastCompactionKept: [] as string[],
+  lastCompactionSummary: "" as string,
   stats: {
-    skip: 0,
-    autoEncode: 0,
-    touch: 0,
     prune: 0,
-    budgetTrim: 0,
     block: 0,
     dedup: 0,
     nudge: 0,
@@ -81,26 +80,25 @@ export function resetBrain() {
   brain.tokenIndex.clear();
   brain.plans.clear();
   brain.deliberations.length = 0;
-  (brain as any).brainMode = "off";
-  brain.brainStrict = false;
-  (brain as any).failureCount = 0;
+  brain.brainMode = "off";
+  brain.failureCount = 0;
   brain.thinkSatisfied = false;
   brain.hasRecall = false;
   brain.hasWriteEdit = false;
   brain.hasRemember = false;
-  (brain as any).hasPlan = false;
+  brain.hasPlan = false;
+  (brain as any).brainStrict = false;
+  (brain as any).needsPlanUpdate = false;
   brain.rule5Warned = false;
   brain.needsDebugThink = false;
-  brain.needsPlanUpdate = false;
   brain.cachedLatestPlan = null;
   brain.recallMemo.clear();
   brain.memoHits = 0;
   brain.memoMisses = 0;
-  brain.stats.skip = 0;
-  brain.stats.autoEncode = 0;
-  brain.stats.touch = 0;
+  brain.memoGen = 0;
+  brain.lastCompactionKept = [];
+  brain.lastCompactionSummary = "";
   brain.stats.prune = 0;
-  brain.stats.budgetTrim = 0;
   brain.stats.block = 0;
   brain.stats.dedup = 0;
   brain.stats.nudge = 0;
@@ -119,5 +117,12 @@ export function isPlanDone(): boolean {
 }
 
 export function renderPlan(p: BrainPlan): string {
-  return `${p.goal}${(p as any).parentId?` (parent ${(p as any).parentId})`:""}${p.links?.length?` links:[${p.links.join(",")}]`:""}\n` + p.tasks.map((t: any, i:number) => `${t.done ? "[x]" : "[ ]"} Task ${i + 1}: ${t.title}${t.refs?.length?` refs:${t.refs.join(",")}`:""}${t.check?` check:${t.check.slice(0,30)}`:""}${t.risk!==undefined?` risk:${t.risk}`:""}${t.depends?.length?` depends:[${t.depends.map((d:number)=>d+1).join(",")}]`:""}${t.relevance!==undefined?` ${t.relevance.toFixed(1)}/10`:""}`).join("\n");
+  const waits = new Map<number, number[]>();
+  p.tasks.forEach((t, i) => { if (t.depends?.length) for (const d of t.depends) { if (!waits.has(d)) waits.set(d, []); waits.get(d)!.push(i+1); }});
+  return `${p.goal}${(p as any).parentId?` (parent ${(p as any).parentId})`:""}${p.links?.length?` links:[${p.links.join(",")}]`:""}\n` + p.tasks.map((t: any, i:number) => {
+    const waiter = waits.get(i)?.length ? ` → waits: T${waits.get(i)!.join(",T")}` : "";
+    const depStr = t.depends?.length?` depends:[${t.depends.map((d:number)=>d+1).join(",")}]`:"";
+    const waitTag = !t.done && t.depends?.length && t.depends.some((d:number)=>!p.tasks[d]?.done) ? " [blocked]" : "";
+    return `${t.done ? "[x]" : "[ ]"} Task ${i + 1}: ${t.title}${t.refs?.length?` refs:${t.refs.join(",")}`:""}${t.check?` check:${t.check.slice(0,30)}`:""}${t.risk!==undefined?` risk:${t.risk}`:""}${depStr}${waitTag}${t.relevance!==undefined?` ${t.relevance.toFixed(1)}/10`:""}${waiter}`;
+  }).join("\n");
 }
