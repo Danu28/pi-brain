@@ -19,7 +19,7 @@ src/
   inject.ts       before_agent_start injection + context dedup
   hooks.ts        tool_result auto-encode, tool_call guards, turn_end nudge
 tests/            vitest unit tests (pure functions from scoring/validation)
-scripts/          legacy copy-installers (install.sh / install.bat) — not shipped in the tarball
+scripts/          legacy copy-installers (install.sh / install.bat) — not needed for git installs
 skills/pi-brain/  SKILL.md shipped via pi.skills
 docs/             architecture.html (offline doc) + this guide
 ```
@@ -31,25 +31,29 @@ npm install          # dev tooling
 npm run typecheck    # tsc --noEmit (strict)
 npm test             # vitest run
 npm run build        # tsup → dist/index.js + dist/index.d.ts + sourcemap
-npm run pack         # npm pack --dry-run (inspect tarball)
 ```
 
-## Publishing
+## Release
 
 ```bash
 npm version patch|minor|major   # bumps + tags (keeps package.json ↔ git tag in sync)
-git push --tags
-# release.yml publishes to npm on the v* tag (npm publish --access public)
+git push origin main release/1.0.0 --tags
 ```
 
-`prepublishOnly` runs `typecheck → test → build` automatically.
+Releases are git tags (`v1.0.0`). Installers pin a tag to get a fixed version, or install unpinned to track latest:
 
-Pre-publish sanity checklist (from the [pi publishing guide](https://www.pi-map.org/guides/publishing-extensions/)):
+```bash
+pi install git:github.com/Danu28/pi-brain@v1.0.0   # pinned release
+pi install git:github.com/Danu28/pi-brain          # latest
+```
 
-1. `npm run pack` lists only `dist/`, `skills/`, `docs/`, README, LICENSE, CHANGELOG.
-2. `npm link` + `pi install link:@danu28/pi-brain` then `/reload` — all 7 tools work.
-3. Fresh shell `pi install npm:@danu28/pi-brain` — `/pi-brain status` responds.
-4. `pi install git:github.com/Danu28/pi-brain@v1.0.0` works from a clean clone.
+`ci.yml` verifies `main` and `release/*` on every push (typecheck → test → build). No npm publishing.
+
+Release sanity checklist:
+
+1. `npm run typecheck && npm test && npm run build` pass locally.
+2. Fresh shell `pi install git:github.com/Danu28/pi-brain@v1.0.0` — `/pi-brain status` responds.
+3. `pi install git:github.com/Danu28/pi-brain` (unpinned) works from a clean clone.
 
 ## Conventions
 

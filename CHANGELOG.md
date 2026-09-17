@@ -24,10 +24,17 @@ First publishable pi package release.
 - `skills/pi-brain/SKILL.md` synced to the clean implementation: removed stale auto-encode / systemPrompt-clamp / scored-inject / `plan{hypotheses}` claims (hooks set flags only; inject appends a static flow note).
 - Added `tests/tools.test.ts` — first permanent tool-level coverage (remember/recall/think/plan/habit/brain-status/command, replay + DAG regressions) and `vitest.config.ts` sandboxing `PI_CODING_AGENT_DIR`.
 
+### Changed (2026-09-17)
+
+- Install is now git-only — npm distribution removed. `release.yml` deleted; `pack` + `prepublishOnly` scripts dropped.
+- `ci.yml` guards `main` and `release/*` (was `master`/`main`).
+- README + dev docs rewritten for `pi install git:...` flows (`@v1.0.0` pin or latest).
+
 ### Install
 
 ```bash
-pi install npm:@danu28/pi-brain
+pi install git:github.com/Danu28/pi-brain@v1.0.0   # pinned release
+pi install git:github.com/Danu28/pi-brain          # latest
 ```
 
 Previous installers (`install.bat`/`install.sh`) now live in `scripts/` for air-gapped copy installs.

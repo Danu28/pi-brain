@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [main, release/*]
   pull_request:
 
 jobs:
@@ -26,6 +26,3 @@ jobs:
 
       - name: Build (dist/)
         run: npm run build
-
-      - name: Inspect tarball (npm pack --dry-run)
-        run: npm run pack

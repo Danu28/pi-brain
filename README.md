@@ -7,14 +7,14 @@ Zero runtime deps beyond the pi-bundled core (`@earendil-works/pi-coding-agent`,
 ## Install
 
 ```bash
-# from npm (recommended, versioned)
-pi install npm:@danu28/pi-brain
-
-# or directly from git (can pin: @v1.0.0)
+# from git — pin a release tag (recommended)
 pi install git:github.com/Danu28/pi-brain@v1.0.0
 
+# or track latest from git (no pin)
+pi install git:github.com/Danu28/pi-brain
+
 # load once without installing
-pi -e npm:@danu28/pi-brain
+pi -e git:github.com/Danu28/pi-brain
 ```
 
 Then restart `pi` (or run `/reload`). Verify with `/pi-brain status` or `pi list`.
@@ -68,8 +68,6 @@ npm install       # dev tooling (tsup, typescript, vitest)
 npm run typecheck # tsc --noEmit
 npm test          # vitest — scoring/validation unit tests
 npm run build     # tsup → dist/index.js + dist/index.d.ts
-npm run pack      # npm pack --dry-run — inspect the tarball
-npm publish       # publishes after prepublishOnly checks
 ```
 
 ## License
