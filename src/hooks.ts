@@ -16,14 +16,33 @@ function isTrivialEdit(ev: any): boolean {
     const inp = ev?.input ?? {};
     const file = inp.file ?? inp.path ?? "";
     if (!file) return false;
-    // trivial when single file + small diff (<30 lines or <800 chars) + risk ≤3 if supplied
     const diffLen = (inp.oldText ?? inp.content ?? "").toString().split("\n").length;
     const size = String(inp.oldText ?? inp.newText ?? inp.content ?? "").length;
     const risk = inp.risk !== undefined ? Number(inp.risk) : 999;
     if (risk !== 999 && risk > 3) return false;
     if (diffLen > 30 || size > 800) return false;
-    // no DAG: not a plan-worthy change
     return true;
+  } catch { return false; }
+}
+// S01 tiered router: 1=trivial (<30 lines, risk≤3, 1 file), 2=feature (<300 lines), 3=complex
+export function taskTier(prompt: string, diffStat?: { lines:number; files:number; risk?:number }): 1|2|3 {
+  try {
+    const { TIER1_LINES, TIER1_RISK, TIER2_LINES } = require("./knobs");
+    const lines = diffStat?.lines ?? prompt.length / 40;
+    const files = diffStat?.files ?? 1;
+    const risk = diffStat?.risk ?? 5;
+    if (lines < TIER1_LINES && risk <= TIER1_RISK && files === 1) return 1;
+    if (lines < TIER2_LINES) return 2;
+    return 3;
+  } catch { return 2; }
+}
+function recallSkippable(ctx: any): boolean {
+  try {
+    // S02: if compaction gist already hot (lastCompactionKept has recent high-score hits), skip recall call
+    const { brain } = require("./state");
+    const kept = brain.lastCompactionSummary || "";
+    if (kept.includes("Brain episodes:") && brain.episodes.size) return true;
+    return false;
   } catch { return false; }
 }
 
@@ -147,11 +166,17 @@ export function registerHooks(pi: ExtensionAPI) {
     if (ev?.toolName === "write" || ev?.toolName === "edit" || ev?.toolName === "plan") {
       const pending = pendingSiblingNames(ctx);
       if (mode === "strict") {
-        // S04 trivial-edit escape: single-file small diff with risk≤3 bypasses plan gate
+        // S01+S04 tiered router + trivial escape: tier-1 skips think+plan when quality gate passes
         const trivial = (ev?.toolName === "write" || ev?.toolName === "edit") && isTrivialEdit(ev);
-        if (trivial) {
-          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "trivial-escape", reason: "trivial edit bypassed strict gate", mode, trivial: true });
-          // allow — do not block
+        const tier = (ev?.toolName === "write" || ev?.toolName === "edit") ? taskTier(ev?.input?.file ?? "", { lines: String(ev?.input?.oldText ?? ev?.input?.content ?? "").split("\n").length, files:1, risk: ev?.input?.risk }) : 3;
+        const qualityGate = (()=> { try { const { relevanceForRemember } = require("./scoring"); const r = relevanceForRemember(ev?.input?.file ?? "task", ev?.input?.oldText ?? "edit", undefined, undefined, undefined); return r.score >=4; } catch { return false; }})();
+        if (trivial && (tier===1 || qualityGate)) {
+          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "tier1-skip", reason: `tier ${tier} skip: trivial edit bypassed strict gate (qualityGate=${qualityGate})`, mode, trivial: true, tier });
+          // allow — do not block (S01+S07)
+        } else if (ev?.toolName === "recall" && recallSkippable(ctx)) {
+          // S02: hint to skip recall when gist hot — nudge not block
+          (pi as any).events?.emit?.("brain:skip", { tool: "recall", reason: "gist hot — recall skippable via context inject", tier });
+          // still allow recall if caller insists
         } else {
         const thinkOk = brain.thinkSatisfied || pending.has("think");
         if (ev?.toolName === "plan" && !thinkOk) {

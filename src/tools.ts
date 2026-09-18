@@ -252,12 +252,13 @@ export function registerTools(pi: ExtensionAPI) {
       const graphBlock = thinkBlock + planBlock;
       const breakdown = scored.length ? `\n\n[Score breakdown top ${Math.min(3,scored.length)}]:` + withRel.slice(0,3).map(({e})=>{ const b=scoreBreakdown(e, normalizedQueries[0]||"", filterTags); return `\n- [${e.cue}] base ${b.base.toFixed(1)} × half-life ${b.halfLife} (age ${b.ageDays}d) × boost ${b.sourceBoost} = ${b.final} (idf ${idf.toFixed(2)})`; }).join("") : "";
       const deletedCueLine = deletedCues.length ? ` cues:[${deletedCues.join(",")}]` : "";
+      const archiveHint = deletedCues.length ? ` — try recall{archive:true, query:"${normalizedQueries[0]?.slice(0,30)??"cue"}"}` : "";
       const text=ranked.length
         ? withRel.map(({e,s})=> {
             const relScore = Math.min(10, Math.round(s*10)/10);
             const relStr = formatRelevance(relScore);
             return `[${e.cue}] ${relStr}${e.tags?.length?` [${e.tags.join(",")}]`:""} ${e.summary}${e.detail?" — "+e.detail.slice(0,120):""}${e.refs?.length?` refs:${e.refs.join(",")}`:""}${e.relevance!==undefined?` (stored ${formatRelevance(e.relevance)})`:""}`;
-          }).join("\n") + breakdown + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL}${deletedCueLine} — not shown to avoid diverting AI]` : "") + graphBlock
+          }).join("\n") + breakdown + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL}${deletedCueLine}${archiveHint} — not shown to avoid diverting AI]` : "") + graphBlock
         : scoredAll.length && !scored.length ? `No relevant episodes (all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL}${deletedCueLine}). Not adding noise into context — let AI read files to get understanding instead.` + graphBlock
         : (thinkHits.length || planHits.length) ? `No episodes, but relevant graph:` + graphBlock
         : "No episodes yet. Use remember to encode — only what matters in future, remembering noise pollutes memory.";
@@ -270,7 +271,7 @@ export function registerTools(pi: ExtensionAPI) {
     name: "think", label: "Think",
     description: "PFC debate graph: 2 debaters + judge + memory links — hypotheses are scored via rubric cost/risk/reversibility/relevance, winner pinned, loser pruned, graph replayable via recall. Clean: explicit, no hidden.",
     promptSnippet: "Run a PFC debate (2 debaters + judge, rubric-scored) before acting — prefer object shape hypotheses:[{side,argues,cost,risk,rev}]",
-    promptGuidelines: ["Use think before planning when the approach is unclear or risky; prefer object shape hypotheses:[{side, argues, cost, risk, rev}] over pipe-strings; unhappy path requires think{goal:'debug <task>', hypotheses:[cause,fix]}."],
+    promptGuidelines: ["Use think before planning when approach unclear/risk>3; prefer object hypotheses; tier-1 may skip think when relevance≥4; tier-2 batch recall→think→plan in ONE turn (or use think_plan); unhappy requires think{goal:'debug <task>'}.","Batch recall+think+plan in one turn when tier≥2 — saves 2 calls vs serial."],
     parameters: Type.Object({
       goal: Type.String({ description: "Reasoning goal or question" }),
       hypotheses: Type.Array(Type.Union([Type.String(), Type.Object({ side: Type.String(), argues: Type.String(), cost: Type.Optional(Type.Number()), risk: Type.Optional(Type.Number()), rev: Type.Optional(Type.Number()), reversibility: Type.Optional(Type.Number()) })]), { description: "Hypotheses — each debater: string \"Side A | cost:3 risk:2 rev:9 | argues...\" OR object {side, argues, cost?, risk?, rev?} — prefer object. QDS Delete <4 hidden.", minItems: 1, maxItems: 3 }),
@@ -279,6 +280,8 @@ export function registerTools(pi: ExtensionAPI) {
     }),
     async execute(_id, params, _signal) {
       if(brain.needsDebugThink&&!params.goal.trim().toLowerCase().startsWith("debug")) return {content:[{type:"text",text:"Blocked: unhappy path requires think{goal:'debug <failed Task N>', hypotheses:[cause,fix]} — goal must start with 'debug'"}],details:{error:"debug required"}} as any;
+      // S05: skip think when confidence high from memory (top score≥8 and recent)
+      try { const pool=candidatePool(params.goal).map(e=>({e,s:scoreEpisode(e,params.goal)})).filter(x=>x.s>=8).sort((a,b)=>b.s-a.s); if(pool.length && pool[0].e && (Date.now()-pool[0].e.ts)/86400000 <2){ const top=pool[0].e; return {content:[{type:"text",text:truncate(`Reused memory as think: ${top.cue} — ${top.summary.slice(0,120)} (score ${pool[0].s.toFixed(1)}) — no new debate needed. Use think_plan if you need a plan.`)}],details:{reused:true, episode:top, score:pool[0].s}} as any; } } catch {}
       const rawInputs: any[] = (params as any).hypotheses;
       // S01 dual-shape: normalize object hypotheses to pipe-string for parser, keep structured
       const rawHyps: string[] = rawInputs.map((h:any)=> {
@@ -336,6 +339,36 @@ export function registerTools(pi: ExtensionAPI) {
     },
   });
 
+  // S03 fuse think+plan for tier-2: one call debates + drafts tasks
+  pi.registerTool({
+    name: "think_plan", label: "Think Plan", description: "Fused think+plan for tier-2: debate 2 hypotheses + draft 3-5 tasks in ONE LLM call (saves 1 call). Fallback to separate think+plan for tier-3.", promptSnippet: "Fused think+plan: think_plan{goal, hypotheses[2], template?, tasks?}", promptGuidelines: ["Use think_plan for tier-2 (30-300 lines) to do think+plan in 1 call; tier-1 skip both, tier-3 keep separate for complex DAG."], parameters: Type.Object({ goal: Type.String({ description: "Reasoning goal" }), hypotheses: Type.Array(Type.Union([Type.String(), Type.Object({ side: Type.String(), argues: Type.String(), cost: Type.Optional(Type.Number()), risk: Type.Optional(Type.Number()), rev: Type.Optional(Type.Number()) })]), { minItems: 2, maxItems: 2 }), tasks: Type.Optional(Type.Array(Type.String())), template: Type.Optional(Type.String({ description: "Template: bugfix|feature|refactor" })), parentId: Type.Optional(Type.String()) }), async execute(_id, params:any, _signal) {
+      // reuse think logic then plan logic in one flush
+      const thinkRes:any = await (pi as any).__thinkPlanThink?.(params) ?? null;
+      // fallback: directly invoke think then plan via internal helpers
+      const rawInputs:any[] = params.hypotheses;
+      const rawHyps:string[] = rawInputs.map((h:any)=> typeof h==="string"? truncate(h): truncate(`${h.side} | cost:${h.cost??5} risk:${h.risk??5} rev:${h.rev??8} | ${h.argues}`));
+      const parsed = rawHyps.map((h:string)=>{ const rel=relevanceForRemember(params.goal,h,undefined,undefined,undefined); const rubric=rubricForHypothesis(h,rel.score); const p=parseDebater(h); return { raw:h, side:p.side, argues:p.argues, rel, rubric, uses:[] as string[] };});
+      for(const d of parsed){ const pool=candidatePool(d.argues||d.side).map(e=>({e,s:scoreEpisode(e,d.argues)})).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,1).map(x=>x.e.id); d.uses=pool;}
+      const goalPool=candidatePool(params.goal).map(e=>({e,s:scoreEpisode(e,params.goal)})).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,2).map(x=>x.e.id);
+      let kept=parsed; if(parsed.length===3){ const f=parsed.filter(d=>d.rel.score>=4); if(f.length>=2) kept=f; }
+      let winner:string|undefined, rubric:any; let debaters:any[]|undefined; if(kept.length>=2){ const sorted=[...kept].sort((a,b)=>b.rubric.avg-a.rubric.avg); winner=sorted[0].side; rubric={a:kept[0].rubric,b:kept[1].rubric}; debaters=kept.map(k=>({side:k.side,argues:k.argues,relevance:k.rel.score,uses:k.uses}));}
+      const links=[...new Set([...goalPool,...kept.flatMap(k=>k.uses)])].slice(0,4);
+      const id=`think:${Date.now()}:${Math.random().toString(36).slice(2,6)}`; const parentId=params.parentId; const entry:Deliberation={ id, parentId: parentId as any, goal:truncate(params.goal), hypotheses: kept.map(k=>k.raw), conclusion: winner? `Judge: ${winner} wins — `+kept.map(k=>`${k.side} ${k.rubric.avg}/10`).join(" vs "):undefined, ts:Date.now(), debaters, rubric, winner, links, score: kept.length? Math.round(kept.reduce((a,b)=>a+b.rel.score,0)/kept.length*10)/10:undefined,};
+      brain.deliberations.push(entry); if(brain.deliberations.length>10) brain.deliberations.shift(); await (pi as any).appendEntry?.("brain:deliberation", entry); brain.thinkSatisfied=true; brain.needsDebugThink=false; (pi as any).events?.emit?.("brain:deliberation", entry);
+      // now draft plan if tasks/template supplied
+      let planRes:any=null;
+      const effTasks = params.tasks?.length? params.tasks : (params.template? expandTemplate(params.goal, params.template): null);
+      if(effTasks?.length){
+        const parsedTasks=effTasks.map((raw:string)=>{ const p=parsePlanTask(raw); const rel=relevanceForRemember(params.goal,p.title,undefined,undefined,p.refs); return { raw, parsed:p, rel };});
+        const tasksRich=parsedTasks.map((t:any)=>({title:truncate(t.parsed.title),done:false,refs:t.parsed.refs,check:t.parsed.check,estimate:t.parsed.estimate,risk:t.parsed.risk,depends:t.parsed.depends,relevance:t.rel.score}));
+        const pl:BrainPlan={ id:`brain-plan:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, goal:truncate(params.goal), tasks: tasksRich, ts:Date.now(), parentId: parentId as any, links: links.length?links:undefined, debateId:id, score: tasksRich.length? Math.round(tasksRich.reduce((a:any,b:any)=>a+(b.relevance??5),0)/tasksRich.length*10)/10:undefined };
+        brain.plans.set(pl.id,pl); brain.cachedLatestPlan=pl; brain.hasPlan=true; await saveMemory(); await (pi as any).appendEntry?.("brain:plan", pl); (pi as any).events?.emit?.("brain:plan", pl);
+        planRes=pl;
+      }
+      const text=truncate(`Fused think_plan ${id}${parentId?` (parent ${parentId})`:""}: ${params.goal}\n- ${kept.map(k=>k.raw).join("\n- ")}${winner?`\n=> Judge: ${winner} wins`:""}${planRes?`\n\nPlan ${planRes.id}: `+planRes.tasks.map((t:any,i:number)=>`[ ] Task ${i+1}: ${t.title}`).join("\n"):""}`);
+      return {content:[{type:"text",text}],details:{deliberation:entry, plan:planRes, fused:true, links}} as any;
+    },
+  });
   const creativeParams=Type.Object({ cues:Type.Array(Type.String(),{description:"2-3 cues to combine",minItems:2,maxItems:3}), prompt:Type.Optional(Type.String({description:"Synthesis prompt (e.g. approach to ...)"})), autoEnrich: Type.Optional(Type.Boolean({ description: "Opt-in auto-enrich for vague prompts (S10)" })) });
   pi.registerTool({
     name: "creative-thinking", label: "Creative Thinking",

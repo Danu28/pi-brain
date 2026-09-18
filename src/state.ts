@@ -90,6 +90,11 @@ export function saveMemorySync(): boolean {
 export async function flushMemory(): Promise<boolean> { return flushSave(); }
 
 export function isVerbose(): boolean { return process.env.PI_BRAIN_VERBOSE === "1" || process.env.PI_BRAIN_TRACE === "1"; }
+// S22 batch telemetry: single event per task not per tool
+let lastTaskDoneEmit = 0;
+export function emitTaskDone(pi:any, goal:string) {
+  try { if(Date.now()-lastTaskDoneEmit < 5000) return; lastTaskDoneEmit=Date.now(); (pi as any).events?.emit?.("brain:task-done", { goal, episodes: brain.episodes.size, plans: brain.plans.size, ts: Date.now() }); } catch {}
+}
 
 export const brain = {
   episodes: new Map<string, BrainEpisode>(),

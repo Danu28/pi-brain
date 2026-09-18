@@ -4,6 +4,26 @@ All notable changes to pi-brain follow [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-09-18
+
+### Cut calls P0 — 5.2→2.3 tiered router (S01-S08)
+- **S01 tiered router** `taskTier()` 1|2|3 — <30 lines & risk≤3 & 1 file → tier1 skips think+plan; quality gate relevance≥4; emits `brain:skip {tier}` (`src/hooks.ts`, `src/knobs.ts` TIER1_LINES/RISK/TIER2_LINES)
+- **S02 inject replaces recall** — `recallSkippable()` checks `lastCompactionSummary` hot gist (score≥7 recent) → skip recall call, use `context` inject; prefetch warms next recall (`src/hooks.ts`, `src/session.ts`)
+- **S03 think_plan fuse** — new tool `think_plan{goal,hypotheses[2],tasks?,template?}` 1 call replaces 2; debate+plan atomic (`src/tools.ts`)
+- **S05 reuse memory as think** — top score≥8 & <2d reuses conclusion `reused:true` 0 calls (`src/tools.ts` think)
+- **S08 batch teaching** — promptGuidelines "batch recall→think_plan→edit in ONE turn when tier≥2" + blockHint (`src/tools.ts`)
+
+### Batch P1 + Quality P2 (S09-S18)
+- **S09 intent cache 5min** `RECALL_MEMO_MS=300000` cross-task, archive hint added (`src/knobs.ts`, `src/tools.ts`)
+- **S10 prefetch** `before_agent_start` warms `candidatePool` → 0 calls (`src/session.ts`)
+- **S15 lazy detail** gist 120 chars; full detail only `score≥7` or `archive:true` (`src/tools.ts`)
+- **S17 archive hint** `— try recall{archive:true, query:"x"}` on deletedCues (`src/tools.ts`)
+- **S18 inline think tier-1** 1 hypothesis → single winner no debate block
+
+### System P3 + docs
+- **S21 pre-rank** `_preRank` idle top3, **S22 batch telemetry** `brain:task-done` throttle 5s (`src/state.ts`, `src/session.ts`)
+- Docs: `docs/llm-calls-reduction.md` + `SKILL.md` tiered workflow (1.2/2.8/4.5) + `pi-brain.knobs.json` TIER knobs; `suggestion.html` not tracked
+
 ## [2.1.0] — 2026-09-18
 
 ### Agent-friendly P0 (S01-S10)

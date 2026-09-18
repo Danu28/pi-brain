@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // @ts-ignore - tui resolved by pi runtime
 import { Text } from "@earendil-works/pi-tui";
 import { BUDGET_STOP_PCT, BUDGET_WARN_PCT, COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
-import { compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
+import { candidatePool, compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
 import { setFooter } from "./footer";
 import { brain, getBrainMode, loadMemory, readMode, renderPlan, resetBrain, saveMemory } from "./state";
 import type { BrainEpisode, BrainPlan } from "./types";
@@ -125,6 +125,13 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     refreshFooter(pi, lastCtx);
   });
 
+  // S10 prefetch recall on before_agent_start so next recall is cache hit (no extra turn)
+  pi.on("before_agent_start" as any, async (ev:any, ctx:any) => {
+    try { const q = (ev?.prompt ?? "").slice(0,120); if(!q) return; const pool=candidatePool(q).slice(0,2).map(e=>e.id); if(pool.length) (brain as any)._prefetch = { q, ids: pool, ts: Date.now() }; } catch {}
+    // S02 gist hot stays via lastCompactionSummary already; no extra
+    // S21 pre-rank idle: precompute top 3 ids for next recall skip
+    try { const all=[...brain.episodes.values()].slice(0,3).map(e=>e.id); if(all.length) (brain as any)._preRank = all; } catch {}
+  });
   pi.on("session_shutdown" as any, async () => {
     try { const { flushMemory } = await import("./state"); await flushMemory(); } catch { await saveMemory(); }
   });

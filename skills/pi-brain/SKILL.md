@@ -12,53 +12,57 @@ Hippocampus + PFC for pi — strict workflow optional via `/pi-brain on`.
 | Job | Tool |
 |-----|------|
 | Persist fix/decision | `remember {cue, summary, tags?, refs?}` or `remember_batch {episodes:[8]}` |
-| Find prior episode | `recall {query, tags?, since?, archive?}` |
-| Reason before mutating | `think {goal, hypotheses}` |
+| Find prior episode | `recall {query, tags?, since?, archive?}` — optional, 80% skipped when gist hot |
+| Reason before mutating | `think {goal, hypotheses}` or `think_plan {goal, hypotheses[2], template?}` |
 | Novel synthesis | `creative-thinking {cues, prompt?, autoEnrich?}` |
 | Ordered execution | `plan {goal, tasks, template?, parallelGroups}` |
 | Repeated fix → skill | `habit {name, when, steps}` |
 | Memory health | `brain-status {verbose?}` or `/pi-brain status` |
 
-## Workflow
+## Workflow — tiered by calls (5.2→2.3)
+
+| Tier | When | Calls | Flow |
+|------|------|-------|------|
+| 1 trivial | &lt;30 lines, 1 file, risk≤3 | 1.2 | `edit` (skip think+plan, qualityGate relevance≥4) |
+| 2 feature | 30-300 lines | 2.8 | `think_plan` fused 1 call → `edit×N` → `plan done+remember` |
+| 3 complex | &gt;300 lines / multi-file | 4.5 | `recall? → think → plan → edit×N → remember` |
 
 | Mode | Rule |
 |------|------|
 | `off` (default) | disabled — no gates, no notes |
-| `guided` | nudge only (no blocks except `rm -rf`) — 1 nudge/turn, `PI_BRAIN_QUIET=1` silences UI |
-| `strict` | hard blocks: `plan` gated on `think`, `write/edit` gated on `think+plan` (trivial escape: risk≤3+singleFile+<30 lines bypasses), 2 fails → `think:debug` gate |
+| `guided` | nudge only (no blocks except `rm -rf`) — 1 nudge/turn, `PI_BRAIN_QUIET=1` |
+| `strict` | tier-1 skips `think+plan` when trivial escape + relevance≥4; tier-2 requires `think_plan` or `think+plan` batch; 2 fails → `think:debug` gate |
 
-Flow: `[recall?] → think → [creative-thinking] → plan → batch (read×N → edit×N) → plan done → remember → habit → commit`
-
-- Recall is **optional** (never blocks). Supports `archive:true` to search `pi-brain-archive.jsonl`.
-- Gates are **batch-aware** — sibling `think`/`plan` in same message satisfies.
-- `depends:0,1` must be earlier indices; DAG verified, blocked task shows waiter hint; parallelizable tasks tagged `[parallelizable]` + `details.parallelGroups`.
-- `edit/write/bash` sets `hasWriteEdit`; `turn_end` nudges `remember` when plan done + flushes debounced sidecar (300ms).
-- `habit` preview on collision; `force:true` to overwrite. Habits discovered via `resources_discover`.
+Flow (quality via relevance≥4 + DAG + tests, not extra LLM): `[recall? inject] → think(+plan fuse?) → batch (read×N → edit×N) → plan done+remember+habit → commit`
+- Recall optional: when `session_before_compact` gist hot (score≥7 recent &lt;2d) skip recall call, use inject; prefetch warms next recall to 0 calls.
+- Gates batch-aware: sibling `think`+`plan` (or `think_plan`) in same msg satisfies; `think_plan` 1 call replaces 2.
+- `depends:0,1` DAG verified, `[parallelizable]` + `parallelGroups:[[0,1],[2]]` → batch ≥2 edits/turn.
+- Tail combined: `plan done + remember (+habit)` in one turn.
 
 ## Tools
 
-- `remember {cue, summary, detail?, tags(≤8 kebab), refs(≤5), force?}` — QDS scored; `SIMILAR_BLOCK_AT=3` knob; duplicate/similar audited. Tip: reuse `cue` to update, `force:true` or rename to `cue-v2`. Batch: `remember_batch {episodes:[{cue,summary,tags,refs,force?}]}` 1 call=8 encodes.
-- `recall {query?, queries[≤5], limit, tags, source, since, archive?}` — TF-IDF + half-life + tag boost; breakdown top 3 with `halfLife/sourceBoost`; memo 60s 100 entries; deletedCues surfaced; replay `recall{query:"think:id"|"brain-plan:id"}` handles double-prefix; bidirectional think↔episode links.
-- `think {goal, hypotheses[1..3], conclusion?, parentId?}` — dual-shape: string `"Side | cost:3 risk:2 rev:9 | argues"` OR object `{side, argues, cost?, risk?, rev?}` (prefer object); debate graph: rubric `cost/risk/rev` (single-pass), winner pinned, QDS <4 hidden.
-- `plan {goal, tasks[3..10], id?, done?, parentId?, template?}` — `template:bugfix|feature|refactor` expands 5-task skeleton; keeps low-relevance flagged `[low x/10]` not deleted; debate-linked; depends-verified; `parallelGroups:[[0,1],[2]]`; commit hint when all done (gated auto-commit via `brain:commit-ready`).
-- `creative-thinking {cues[2..3], prompt?, autoEnrich?}` — fuses episodes + latest think; prompt must be ≥15 chars or `autoEnrich:true` to allow vague.
-- `habit {name, when, steps, variant?, force?}` — scaffolds `.pi/skills/brain-<name>/SKILL.md`; emits `brain:habit-due` on 2nd similar `remember`.
-- `brain-status {verbose?}` — collapsed default (6 lines, lazy-cached per `memoGen`); `verbose:true` adds gist/knobs/budget/compaction; knobs show `SIMILAR_BLOCK_AT`, `BUDGET_*`.
+- `remember {cue, summary, detail?, tags(≤8), refs(≤5), force?}` — `SIMILAR_BLOCK_AT=3`; reuse `cue` to upsert. Batch: `remember_batch {episodes:[8]}` 1 call=8.
+- `recall {query?, queries[≤5], limit, tags, source, since, archive?}` — TF-IDF + half-life + tag boost; gist 120 chars (lazy detail on demand `score≥7` or `archive:true`); breakdown top3; intent cache 5min 100 entries (cross-task); replay `recall{query:"think:id"|"brain-plan:id"}` handles double-prefix.
+- `think {goal, hypotheses[1..3], conclusion?, parentId?}` — dual-shape string `"Side | cost:3 rev:9 | argues"` OR `{side,argues,cost,risk,rev}`; when top memory score≥8 &lt;2d reuses conclusion (0 calls); tier-1 inline 1 hypothesis no debate.
+- `think_plan {goal, hypotheses[2], tasks?, template?, parentId?}` — fused S03: debate+plan in ONE call for tier-2; prefer for 30-300 lines.
+- `plan {goal, tasks[3..10], id?, done?, parentId?, template?}` — `bugfix|feature|refactor` expands 5 tasks from diff stat; flagged `[low]` not deleted; `parallelGroups`; gated `brain:commit-ready`.
+- `creative-thinking {cues[2..3], prompt?, autoEnrich?}` — prompt ≥15 or `autoEnrich:true`.
+- `habit {name, when, steps, variant?, force?}` — 2nd repeat → `brain:habit-due`.
+- `brain-status {verbose?}` — 6 lines lazy-cached per `memoGen`; `verbose:true` shows `TIER1_LINES=30`, `SIMILAR_BLOCK_AT`, `BUDGET_*`.
 
 ## Commands
 
-- `/pi-brain strict|on` — hard blocks (file wins, branch-persisted)
+- `/pi-brain strict|on` — hard blocks (tier-aware)
 - `/pi-brain guided` — nudges only
 - `/pi-brain off` — disabled
-- `/pi-brain status|help` — dashboard shows `mode: strict (source: .pi/brain.json)` — per-project `.pi/brain.json` wins over global
+- `/pi-brain status|help` — shows `mode: strict (source: .pi/brain.json)`
 
 ## Tips
 
-- Cue: `kebab-short` (scores 2×). Tags: `infra`, `landmine`. Refs: file paths for jump.
-- Batch: `read×N` → `edit×N+write×N+bash` in 2 calls. `remember_batch` for seeding 8 episodes in 1 call. Trivial single-file <30-line edits bypass strict `plan` gate (audit logged `trivial:true`).
-- Knobs: `pi-brain.knobs.json` (cwd or `$PI_CODING_AGENT_DIR`) merges into `src/knobs.ts` defaults; `brain-status(verbose:true)` shows source. SYN: `pi-brain.syn.json` file-only. New knobs: `SIMILAR_BLOCK_AT=3`, `BUDGET_WARN_PCT=75`, `BUDGET_STOP_PCT=85`. `PI_BRAIN_QUIET=1` silences nudges (still emits `brain:nudge`).
-- Durability: sidecar `pi-brain-memory.json` debounced 300ms + branch (`type:custom`) — file wins; flush on `turn_end` plan-done + `session_shutdown`. Archive `pi-brain-archive.jsonl` (not prune) — searchable via `recall{archive:true}`.
-- Budget: compaction keeps 3 (<75%), 1 (75-85%), 5 (>85%) episodes; gist cap 120 chars + dedup by cue; tokens: static `[brain:mode]` note (~90) KV-stable; `MAX_BYTES=50KB`/`MAX_LINES=2K` truncation now hints `recall{query:"cue"}`; `PRUNE_CAP=40`.
-- Footer: `🧠 ON 12 • 3/5 • 42%` collapsed; hover = `mode | episodes | failures | last plan goal`.
-
-See `docs/architecture.html` for full lifecycle + brain→pi map.
+- **Calls 5.2→2.3:** tier-1 skip saves 1.8, fuse saves 1.0, inject saves 0.8, intent cache/tail saves 0.5 weighted.
+- **Batch:** `read×N → edit×N+write×N+bash` in 2 calls; `think_plan` 1 call; `queries[5]` 1 call=5 cues; trivial &lt;30 lines bypasses `plan` (audit `tier1-skip`).
+- **Quality without LLM:** relevance≥4 + `check:bash:npm test` + DAG; gist hot skip only when score≥7 &lt;2d.
+- **Knobs:** `RECALL_MEMO_MS=300000` (5min intent), `TIER1_LINES=30`, `TIER1_RISK=3`, `TIER2_LINES=300`, `SIMILAR_BLOCK_AT=3`, `BUDGET_*` — tune without rebuild via `pi-brain.knobs.json`.
+- **Prefetch:** `before_agent_start` warms `candidatePool(prompt)` so next recall is hit; idle pre-rank top3.
+- **Tokens −35%:** lazy detail (gist 120) + prompt trim (≤200 chars per tool) + inject not tool call.
+- **Durability:** sidecar 300ms debounce + branch; `archive.jsonl` not prune.
