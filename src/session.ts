@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // @ts-ignore - tui resolved by pi runtime
 import { Text } from "@earendil-works/pi-tui";
-import { COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
+import { BUDGET_STOP_PCT, BUDGET_WARN_PCT, COMPACT_LARGE, COMPACT_SMALL } from "./knobs";
 import { compressEpisodes, rebuildIndex, scoreEpisode } from "./scoring";
 import { setFooter } from "./footer";
 import { brain, getBrainMode, loadMemory, readMode, renderPlan, resetBrain, saveMemory } from "./state";
@@ -38,7 +38,8 @@ function rebuildFromBranch(ctx: any): any {
 }
 
 function applyMode(fileMode: any, branchMode: any) {
-  const effective = fileMode !== undefined ? fileMode : branchMode;
+  const fm = fileMode && typeof fileMode === "object" && fileMode.mode ? fileMode.mode : fileMode;
+  const effective = fm !== undefined ? fm : branchMode;
   if (effective !== undefined) {
     const m = typeof effective === "string" ? effective : (effective ? "strict" : "off");
     brain.brainMode = m as any;
@@ -50,6 +51,14 @@ function refreshFooter(pi: ExtensionAPI, ctx: any) {
   setFooter(pi, ctx, isStrict);
 }
 
+function budgetKeepCount(pct: number | null): number {
+  if (pct !== null) {
+    if (pct > BUDGET_STOP_PCT) return COMPACT_LARGE; // >85 keep 5
+    if (pct > BUDGET_WARN_PCT) return 1; // >75 keep 1
+    return COMPACT_SMALL; // <75 keep 3
+  }
+  return COMPACT_SMALL;
+}
 export function registerSessionHandlers(pi: ExtensionAPI) {
   try {
     (pi as any).registerEntryRenderer?.("brain:episode", (_entry: any, opts: any) => {
@@ -87,7 +96,9 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     refreshFooter(pi, ctx);
   });
 
-  pi.on("session_before_compact" as any, async (ev: any) => {
+  pi.on("session_before_compact" as any, async (ev: any, ctx:any) => {
+    let pct: number | null = null;
+    try { const u = (ctx as any)?.getContextUsage?.() ?? (pi as any).getContextUsage?.() ?? ev?.preparation ?? null; if (u?.percent !== undefined) pct = u.percent; else if (u?.tokensBefore && u?.contextWindow) pct = Math.round(u.tokensBefore / u.contextWindow * 100); } catch {}
     const query = brain.deliberations[brain.deliberations.length-1]?.goal ?? (brain.cachedLatestPlan?.goal ?? "");
     let ranked: BrainEpisode[];
     if (query) {
@@ -98,14 +109,15 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
     }
     const sliced = ranked.slice(0, COMPACT_LARGE);
     if (!sliced.length) return;
-    const keep = sliced.length <= 15 ? sliced.slice(0, COMPACT_SMALL) : sliced.slice(0, COMPACT_LARGE);
+    const keepN = budgetKeepCount(pct);
+    const keep = sliced.slice(0, keepN);
     const front = `Brain episodes:\n${compressEpisodes(keep)}`;
     const base = ev?.summary ?? "";
     const summary = base ? `${front}\n\n${base}` : front;
     const keptIds = keep.map(e=>e.id);
     brain.lastCompactionKept = keptIds;
     brain.lastCompactionSummary = front;
-    try { await saveMemory(); } catch {}
+    try { const { flushMemory } = await import("./state"); await flushMemory(); } catch { try { await saveMemory(); } catch {} }
     return { compaction: { summary, firstKeptEntryId: ev?.preparation?.firstKeptEntryId ?? "", tokensBefore: ev?.preparation?.tokensBefore ?? 0 } } as any;
   });
 
@@ -114,6 +126,6 @@ export function registerSessionHandlers(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown" as any, async () => {
-    await saveMemory();
+    try { const { flushMemory } = await import("./state"); await flushMemory(); } catch { await saveMemory(); }
   });
 }

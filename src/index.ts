@@ -16,4 +16,20 @@ export default function (pi: ExtensionAPI) {
   registerCommand(pi);         // /pi-brain on|off|status
   registerInjection(pi);       // before_agent_start (strict/default inject) + context dedup
   registerHooks(pi);           // tool_result flags + tool_call guards + turn_end nudge
+  // S15 re-enable habit SKILL.md indexing for .pi/skills/brain-*/SKILL.md
+  try {
+    (pi as any).on?.("resources_discover" as any, async () => {
+      try {
+        const { readdirSync, existsSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const root = join(process.cwd(), ".pi", "skills");
+        if (!existsSync(root)) return [];
+        const entries = readdirSync(root, { withFileTypes: true });
+        const skills = entries.filter((d:any)=> d.isDirectory() && d.name.startsWith("brain-"))
+          .map((d:any)=> ({ kind: "skill", name: d.name, path: join(root, d.name, "SKILL.md")}))
+          .filter((s:any)=> { try { return existsSync(s.path); } catch { return false; }});
+        return skills;
+      } catch { return []; }
+    });
+  } catch {}
 }

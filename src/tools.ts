@@ -1,11 +1,48 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, KNOBS_SOURCE, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, RELEVANCE_MIN_RECALL, RELEVANCE_MIN_REMEMBER, REMEMBER_BOOST, TAG_BOOST } from "./knobs";
+import { AUTO_BOOST, AUTO_TTL_MS, BUDGET_STOP_PCT, BUDGET_WARN_PCT, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, KNOBS_SOURCE, MAX_BYTES, MAX_LINES, RECALL_MEMO_MS, RELEVANCE_MIN_RECALL, RELEVANCE_MIN_REMEMBER, REMEMBER_BOOST, SIMILAR_BLOCK_AT, TAG_BOOST } from "./knobs";
 import { truncate } from "./knobs";
 import { avgIdf, candidatePool, compressEpisodes, estTokens, expandTokens, formatRelevance, gistForEpisode, indexEpisode, normalizeTags, parseDebater, parsePlanTask, parseSince, planTaskError, relevanceForRemember, relevanceLabel, rubricForHypothesis, scoreBase, scoreBreakdown, scoreEpisode, tokenize, unindexEpisode } from "./scoring";
-import { brain, getBrainMode, isVerbose, renderPlan, saveMemory } from "./state";
+import { brain, getBrainMode, getParallelGroups, isVerbose, renderPlan, saveMemory } from "./state";
 import type { BrainEpisode, BrainPlan, Deliberation } from "./types";
+
+// S13 templates
+const PLAN_TEMPLATES: Record<string, string[]> = {
+  bugfix: [
+    "reproduce bug + log failure | refs:src/ check:bash:npm test risk:3",
+    "root-cause analysis + think linkage | refs:src/ risk:3",
+    "fix source + handle edge | refs:src/ risk:4",
+    "add/adjust tests | refs:tests/ check:bash:npm test risk:2",
+    "remember + habit check + commit | refs:.pi/skills/ risk:1",
+  ],
+  feature: [
+    "analyze requirement & existing code | refs:src/ risk:2",
+    "design API/schema + think debate | refs:src/ risk:3",
+    "implement core logic | refs:src/ risk:4",
+    "wire UI/hook integration | refs:src/ risk:3",
+    "tests + docs + remember | refs:tests/ check:bash:npm test risk:2",
+  ],
+  refactor: [
+    "audit current implementation | refs:src/ risk:2",
+    "design new structure + think | refs:src/ risk:3",
+    "migrate code incrementally | refs:src/ risk:4",
+    "verify via tests & typecheck | refs:tests/ check:bash:npm test risk:2",
+    "update docs + remember | refs:docs/ risk:1",
+  ],
+};
+
+function expandTemplate(goal: string, template?: string): string[] | null {
+  if (!template) return null;
+  const key = template.toLowerCase().trim();
+  const base = PLAN_TEMPLATES[key];
+  if (!base) return null;
+  // replace placeholder with goal cue if needed
+  return base.map(t => t);
+}
+
+// S23 lazy status memo
+let statusCache: { gen: number; text: string; verbose: boolean } | null = null;
 
 export function registerTools(pi: ExtensionAPI) {
   pi.registerTool({
@@ -42,7 +79,7 @@ export function registerTools(pi: ExtensionAPI) {
         return { content: [{ type: "text", text: `QDS Delete: not relevant enough to remember — relevance ${formatRelevance(rel.score)} (need ≥${RELEVANCE_MIN_REMEMBER})\nReasons: ${rel.reasons.join(", ")}\nTip: remembering noise pollutes memory — add detail/tags/refs or longer summary (50-120 chars ideal), or force:true to override` }], details: { audit: "relevance-low", relevance: rel, blocked: true } } as any;
       }
       const query=`${params.cue} ${params.summary}`, terms=[...new Set(expandTokens(tokenize(query)))], idf=avgIdf(terms);
-      const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=5).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,3);
+      const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=SIMILAR_BLOCK_AT).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,3);
       if (scored.length && !params.force && !exact) {
         brain.stats.audit++;
         const preview=scored.map(x=>`[${x.e.cue}] ${x.e.summary.slice(0,80)} (score:${x.s.toFixed(1)}) — diff: new "${params.cue}: ${params.summary.slice(0,60)}"`).join("\n");
@@ -60,7 +97,66 @@ export function registerTools(pi: ExtensionAPI) {
         habitHint = `\n[Habit due: 2 repeats for "${params.cue}" — consider habit{name:"${habitName}", when:"Use when ${params.cue} recurs", steps:"..."} ]`;
         (pi as any).events?.emit?.("brain:habit-due", { cue: params.cue, habitName, count: familyHits });
       }
+      // S08 auto-link: link to latest deliberation if exists
+      const latestDelib = brain.deliberations[brain.deliberations.length-1];
+      if (latestDelib) {
+        if (!ep.tags) (ep as any).tags = [];
+        // bidirectional link via deliberation links
+        if (!latestDelib.links) latestDelib.links = [];
+        if (!latestDelib.links.includes(ep.id)) latestDelib.links.push(ep.id);
+      }
       return { content: [{ type: "text", text: `Encoded ${ep.id} | relevance ${formatRelevance(rel.score)} (${rel.label}) — ${rel.reasons.join(", ")}${habitHint}` }], details: { id: ep.id, episode: ep, audit: scored.length?"forced":"clean", relevance: rel, habitDue: !!habitHint } };
+    },
+  });
+
+  // S11 batch remember
+  pi.registerTool({
+    name: "remember_batch", label: "Remember Batch",
+    description: "Batch encode 2-8 episodes in one call (server dedup + shared relevance + one save flush). 7× faster seeding.",
+    promptSnippet: "Batch remember 2-8 episodes: remember_batch{episodes:[{cue,summary}]}",
+    promptGuidelines: ["Use remember_batch to seed 5-8 episodes in one call instead of 5 parallel remembers."],
+    parameters: Type.Object({
+      episodes: Type.Array(Type.Object({
+        cue: Type.String(),
+        summary: Type.String(),
+        detail: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        refs: Type.Optional(Type.Array(Type.String())),
+        force: Type.Optional(Type.Boolean()),
+      }), { minItems: 1, maxItems: 8 }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, _ctx) {
+      const results: any[] = [];
+      const seenCues = new Set<string>();
+      for (const ep of params.episodes) {
+        const cueNorm = ep.cue.trim().toLowerCase();
+        if (!cueNorm || seenCues.has(cueNorm)) {
+          results.push({ cue: ep.cue, error: "duplicate cue in batch or empty", skipped: true });
+          continue;
+        }
+        seenCues.add(cueNorm);
+        const tags = normalizeTags(ep.tags as any);
+        const refs = ep.refs?.map((r:string)=>truncate(r)).slice(0,5);
+        const rel = relevanceForRemember(ep.cue, ep.summary, ep.detail, tags, refs);
+        if (!ep.force && rel.score < RELEVANCE_MIN_REMEMBER) {
+          results.push({ cue: ep.cue, error: `relevance ${rel.score}<${RELEVANCE_MIN_REMEMBER}`, blocked: true, relevance: rel });
+          continue;
+        }
+        const exact = [...brain.episodes.values()].find(e=>e.cue.trim().toLowerCase()===cueNorm);
+        if (exact && !ep.force) {
+          unindexEpisode(exact); exact.summary=truncate(ep.summary); if(ep.detail) exact.detail=truncate(ep.detail); if(tags) exact.tags=tags; if(refs) exact.refs=refs; exact.ts=Date.now(); exact.source="remember"; exact.relevance=rel.score; delete (exact as any).expiresAt; indexEpisode(exact); await (pi as any).appendEntry?.("brain:episode", exact); brain.episodes.set(exact.id, exact); results.push({ cue: ep.cue, id: exact.id, audit: "exact-cue-upsert" });
+          continue;
+        }
+        const query=`${ep.cue} ${ep.summary}`, terms=[...new Set(expandTokens(tokenize(query)))], idf=avgIdf(terms);
+        const scored=[...brain.episodes.values()].filter(e=>e.source!=="auto").map(e=>{ const base=scoreBase(e,query,tags); return base===0?{e,s:0}:{e,s:base*idf}; }).filter(x=>x.s>=SIMILAR_BLOCK_AT).sort((a,b)=>b.s-a.s).slice(0,2);
+        if (scored.length && !ep.force) { results.push({ cue: ep.cue, error: "similar-found", similar: scored.map(x=>x.e.cue), blocked: true }); continue; }
+        const neb: BrainEpisode={ id:`${ep.cue.replace(/[^a-z0-9-]/gi,"-").slice(0,30)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, cue:truncate(ep.cue), summary:truncate(ep.summary), detail:ep.detail?truncate(ep.detail):undefined, tags, refs, ts:Date.now(), source:"remember", relevance: rel.score };
+        await (pi as any).appendEntry?.("brain:episode", neb); brain.episodes.set(neb.id, neb); indexEpisode(neb); results.push({ cue: ep.cue, id: neb.id, audit: "clean", relevance: rel.score });
+      }
+      await saveMemory();
+      const ok = results.filter(r=> r.id).length;
+      const blocked = results.filter(r=> r.blocked).length;
+      return { content: [{ type: "text", text: `Batch remember: ${ok} encoded, ${blocked} blocked/audit, ${results.length-ok-blocked} skipped\n` + results.map(r=> r.id? ` ✓ ${r.cue} → ${r.id}` : ` ✗ ${r.cue}: ${r.error}`).join("\n") }], details: { results, ok, blocked } } as any;
     },
   });
 
@@ -76,15 +172,31 @@ export function registerTools(pi: ExtensionAPI) {
       tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (AND)", maxItems: 8 })),
       source: Type.Optional(Type.String({ description: "Filter by source: remember|auto" })),
       since: Type.Optional(Type.String({ description: "Filter since: 7d|24h|ISO|ms" })),
+      archive: Type.Optional(Type.Boolean({ description: "Search archived episodes (S24)" })),
     }),
     async execute(_id, params, signal) {
       const limit=params.limit??5, queries:string[]=params.queries?.length?params.queries:[params.query??""];
-      const normTags=normalizeTags(params.tags as any), memoKey=`${queries.join("\x00")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}`;
+      // S05 replay polish: normalize think:/brain-plan: prefixes to handle double-prefix
+      const normalizedQueries = queries.map(q=> q.replace(/^think:think:/, "think:").replace(/^brain-plan:brain-plan:/, "brain-plan:").trim());
+      const normTags=normalizeTags(params.tags as any), memoKey=`${normalizedQueries.join("\x00")}|${(normTags??[]).join(",")}|${params.source??""}|${params.since??""}|${limit}|${(params as any).archive?1:0}`;
       const cached=brain.recallMemo.get(memoKey);
       if(cached && cached.gen===brain.memoGen && Date.now()-cached.ts<RECALL_MEMO_MS){ brain.memoHits++; brain.recallMemo.delete(memoKey); brain.recallMemo.set(memoKey,cached); (pi as any).events?.emit?.("brain:recall-cache", { memoKey: memoKey.slice(0,120), hits: brain.memoHits, age: Date.now()-cached.ts, cached: true }); if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any; return {content:[{type:"text",text:truncate(cached.text)}],details:{episodes:cached.ranked,cached:true}}; }
       const filterTags=normTags, sinceTs=parseSince(params.since as any);
+      // S24 archive search
       let candidates: BrainEpisode[]=[...brain.episodes.values()];
-      const allQToks=[...new Set(queries.flatMap(q=>expandTokens(tokenize(q))))];
+      if ((params as any).archive) {
+        try {
+          const { readFileSync, existsSync } = await import("node:fs");
+          const { join } = await import("node:path");
+          const { homedir } = await import("node:os");
+          const ap = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain-archive.jsonl");
+          if (existsSync(ap)) {
+            const lines = readFileSync(ap, "utf8").split("\n").filter(Boolean);
+            for (const line of lines.slice(-40)) try { const e=JSON.parse(line); if(e?.id && !brain.episodes.has(e.id)) candidates.push(e as BrainEpisode); } catch {}
+          }
+        } catch {}
+      }
+      const allQToks=[...new Set(normalizedQueries.flatMap(q=>expandTokens(tokenize(q))))];
       if(allQToks.length&&brain.tokenIndex.size){
         const idSets=allQToks.map(t=>brain.tokenIndex.get(t)).filter(Boolean) as Set<string>[];
         if(idSets.length){
@@ -94,25 +206,30 @@ export function registerTools(pi: ExtensionAPI) {
         }
       }
       candidates=candidates.filter(e=>{ if(params.source&&e.source!==params.source) return false; if(sinceTs!==undefined&&e.ts<sinceTs) return false; if(e.expiresAt&&e.expiresAt<Date.now()) return false; if(filterTags?.length){ const eTags=normalizeTags(e.tags)??[]; if(!filterTags.every(ft=>eTags.includes(ft))) return false; } return true; });
-      const terms=[...new Set(queries.flatMap(q=>expandTokens(tokenize(q))))], idf=avgIdf(terms);
-      const scoredAll=candidates.map(e=>{ const raw=Math.max(...queries.map(q=>scoreEpisode(e,q,filterTags))); return raw===0?{e,s:0}:{e,s:raw*idf}; }).filter(x=>x.s>0||queries.every(q=>q.trim()==="")||!!filterTags?.length).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,limit);
-      const isTagOnly = queries.every(q=>q.trim()==="") && !!filterTags?.length;
+      const terms=[...new Set(normalizedQueries.flatMap(q=>expandTokens(tokenize(q))))], idf=avgIdf(terms);
+      const scoredAll=candidates.map(e=>{ const raw=Math.max(...normalizedQueries.map(q=>scoreEpisode(e,q,filterTags))); return raw===0?{e,s:0}:{e,s:raw*idf}; }).filter(x=>x.s>0||normalizedQueries.every(q=>q.trim()==="")||!!filterTags?.length).sort((a,b)=>b.s-a.s||b.e.ts-a.e.ts).slice(0,limit);
+      const isTagOnly = normalizedQueries.every(q=>q.trim()==="") && !!filterTags?.length;
       const scored = isTagOnly ? scoredAll : scoredAll.filter(x=> x.s >= RELEVANCE_MIN_RECALL);
       const deletedCount = scoredAll.length - scored.length;
+      const deletedCues = scoredAll.filter(x=> x.s < RELEVANCE_MIN_RECALL).slice(0,3).map(x=> x.e.cue);
       const ranked=scored.length?scored.map(x=>x.e): (scoredAll.length ? [] as BrainEpisode[] : candidates.sort((a,b)=>b.ts-a.ts).slice(0,limit));
       if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any;
       const withRel = scored.map(x=>({ e: x.e, s: x.s, rel: Math.min(10, Math.round(x.s*10)/10) }));
-      const replayThinkId = queries[0]?.replace(/^think:think:/, "think:").match(/(think:[\w:-]+)/)?.[1];
+      const replayThinkId = normalizedQueries[0]?.match(/(think:[\w:-]+)/)?.[1];
       if (replayThinkId) {
         const delib = brain.deliberations.find(d=> d.id===replayThinkId);
         if (delib) {
+          const linkedPlans = delib.links?.map(id=> brain.plans.get(id)).filter(Boolean) as BrainPlan[] ?? [];
+          const linkedEps = delib.links?.map(id=> brain.episodes.get(id)).filter(Boolean) as BrainEpisode[] ?? [];
           const replayText = `Replay ${delib.id}${delib.parentId?` (parent ${delib.parentId})`:""}: ${delib.goal}\n` +
             (delib.debaters? `Debate:\n` + delib.debaters.map((d:any,i:number)=>` ${i===0?"A":"B"}: ${d.side} ${formatRelevance(d.relevance)} — ${d.argues} uses:[${d.uses.join(",")||"none"}]`).join("\n") + `\nWinner: ${delib.winner} ${delib.rubric?`— A ${delib.rubric.a.avg}/10 vs B ${delib.rubric.b.avg}/10`:""}` : `- ${delib.hypotheses.join("\n- ")}`) +
-            (delib.conclusion?`\n=> ${delib.conclusion}`:"") + (delib.links?.length?`\nLinks:[${delib.links.join(",")}]`:"");
-          return {content:[{type:"text",text:truncate(replayText)}],details:{deliberation:delib, replay:true}} as any;
+            (delib.conclusion?`\n=> ${delib.conclusion}`:"") + (delib.links?.length?`\nLinks:[${delib.links.join(",")}]`:"") +
+            (linkedPlans.length?`\nLinked plans:\n`+linkedPlans.map(p=> ` ${p.id}: ${p.goal} ${p.tasks.filter((t:any)=>t.done).length}/${p.tasks.length} done`).join("\n"):"") +
+            (linkedEps.length?`\nLinked episodes:\n`+linkedEps.map(e=> ` [${e.cue}] ${e.summary.slice(0,80)}`).join("\n"):"");
+          return {content:[{type:"text",text:truncate(replayText)}],details:{deliberation:delib, replay:true, linkedPlans, linkedEps}} as any;
         }
       }
-      const replayPlanId = queries[0]?.replace(/^brain-plan:brain-plan:/, "brain-plan:").match(/(brain-plan:[\w:-]+)/)?.[1];
+      const replayPlanId = normalizedQueries[0]?.match(/(brain-plan:[\w:-]+)/)?.[1];
       if (replayPlanId) {
         const pl = brain.plans.get(replayPlanId);
         if (pl) {
@@ -122,47 +239,57 @@ export function registerTools(pi: ExtensionAPI) {
       }
       const thinkHits = brain.deliberations.map(d=>{
         const pseudo = { cue: d.goal, summary: d.hypotheses.join(" "), detail: d.conclusion, tags: d.links } as any;
-        const s = scoreBase(pseudo, queries[0]||"") * 1.2;
+        const s = scoreBase(pseudo, normalizedQueries[0]||"") * 1.2;
         return { d, s };
       }).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,2);
       const planHits = [...brain.plans.values()].map(p=>{
         const pseudo = { cue: p.goal, summary: p.tasks.map((t:any)=>t.title).join(" "), detail: (p as any).links?.join(" "), tags: (p as any).links } as any;
-        const s = scoreBase(pseudo, queries[0]||"") * 1.1;
+        const s = scoreBase(pseudo, normalizedQueries[0]||"") * 1.1;
         return { p, s };
       }).filter(x=>x.s>=3).sort((a,b)=>b.s-a.s).slice(0,2);
       const thinkBlock = thinkHits.length ? `\n\n[Think Graph — time-travel replay]:\n` + thinkHits.map(({d,s})=> `- ${d.id}${d.parentId?` (parent ${d.parentId})`:""}: ${d.goal} — winner:${d.winner||"n/a"} — ${formatRelevance(Math.min(10,Math.round(s*10)/10))} — links:[${(d.links||[]).join(",")||"none"}] — replay: recall{query:"${d.id}"}`).join("\n") : "";
       const planBlock = planHits.length ? `\n\n[Plan Graph — living contract]:\n` + planHits.map(({p,s})=> `- ${p.id}${(p as any).parentId?` (parent ${(p as any).parentId})`:""}: ${p.goal} — ${p.tasks.filter((t:any)=>t.done).length}/${p.tasks.length} done — ${formatRelevance(Math.min(10,Math.round(s*10)/10))} — links:[${((p as any).links||[]).join(",")||"none"}] — replay: recall{query:"${p.id}"}`).join("\n") : "";
       const graphBlock = thinkBlock + planBlock;
-      const breakdown = scored.length ? `\n\n[Score breakdown top ${Math.min(2,scored.length)}]:` + withRel.slice(0,2).map(({e})=>{ const b=scoreBreakdown(e, queries[0]||"", filterTags); return `\n- [${e.cue}] base ${b.base.toFixed(1)} × half-life ${b.halfLife} (age ${b.ageDays}d) × boost ${b.sourceBoost} = ${b.final} (idf ${idf.toFixed(2)})`; }).join("") : "";
+      const breakdown = scored.length ? `\n\n[Score breakdown top ${Math.min(3,scored.length)}]:` + withRel.slice(0,3).map(({e})=>{ const b=scoreBreakdown(e, normalizedQueries[0]||"", filterTags); return `\n- [${e.cue}] base ${b.base.toFixed(1)} × half-life ${b.halfLife} (age ${b.ageDays}d) × boost ${b.sourceBoost} = ${b.final} (idf ${idf.toFixed(2)})`; }).join("") : "";
+      const deletedCueLine = deletedCues.length ? ` cues:[${deletedCues.join(",")}]` : "";
       const text=ranked.length
         ? withRel.map(({e,s})=> {
             const relScore = Math.min(10, Math.round(s*10)/10);
             const relStr = formatRelevance(relScore);
             return `[${e.cue}] ${relStr}${e.tags?.length?` [${e.tags.join(",")}]`:""} ${e.summary}${e.detail?" — "+e.detail.slice(0,120):""}${e.refs?.length?` refs:${e.refs.join(",")}`:""}${e.relevance!==undefined?` (stored ${formatRelevance(e.relevance)})`:""}`;
-          }).join("\n") + breakdown + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL} — not shown to avoid diverting AI]` : "") + graphBlock
-        : scoredAll.length && !scored.length ? `No relevant episodes (all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL}). Not adding noise into context — let AI read files to get understanding instead.` + graphBlock
+          }).join("\n") + breakdown + (deletedCount ? `\n\n[QDS Delete: ${deletedCount} low-relevance hidden — relevance < ${RELEVANCE_MIN_RECALL}${deletedCueLine} — not shown to avoid diverting AI]` : "") + graphBlock
+        : scoredAll.length && !scored.length ? `No relevant episodes (all ${scoredAll.length} hits below relevance ${RELEVANCE_MIN_RECALL}${deletedCueLine}). Not adding noise into context — let AI read files to get understanding instead.` + graphBlock
         : (thinkHits.length || planHits.length) ? `No episodes, but relevant graph:` + graphBlock
         : "No episodes yet. Use remember to encode — only what matters in future, remembering noise pollutes memory.";
-      brain.memoMisses++; brain.recallMemo.set(memoKey,{ts:Date.now(),ranked, text, gen: brain.memoGen}); if(brain.recallMemo.size>50){ const first=brain.recallMemo.keys().next().value; if(first) brain.recallMemo.delete(first); }
-      return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked, scores: withRel.map(x=>({ cue: x.e.cue, final: x.s, relevance: x.rel, label: relevanceLabel(x.rel) })), deletedCount, thinkHits: thinkHits.map(x=>({ id: x.d.id, goal: x.d.goal, winner: x.d.winner, score: x.s })), planHits: planHits.map(x=>({ id: x.p.id, goal: x.p.goal, score: x.s })), qds: "Question→Delete→Simplify", breakdown: withRel.slice(0,2).map(x=>({ cue: x.e.cue, ...scoreBreakdown(x.e, queries[0]||"", filterTags) }))}};
+      brain.memoMisses++; brain.recallMemo.set(memoKey,{ts:Date.now(),ranked, text, gen: brain.memoGen}); if(brain.recallMemo.size>100){ const first=brain.recallMemo.keys().next().value; if(first) brain.recallMemo.delete(first); }
+      return {content:[{type:"text",text:truncate(text)}],details:{episodes:ranked, scores: withRel.map(x=>({ cue: x.e.cue, final: x.s, relevance: x.rel, label: relevanceLabel(x.rel) })), deletedCount, deletedCues, thinkHits: thinkHits.map(x=>({ id: x.d.id, goal: x.d.goal, winner: x.d.winner, score: x.s })), planHits: planHits.map(x=>({ id: x.p.id, goal: x.p.goal, score: x.s })), qds: "Question→Delete→Simplify", breakdown: withRel.slice(0,3).map(x=>({ cue: x.e.cue, ...scoreBreakdown(x.e, normalizedQueries[0]||"", filterTags) }))}};
     },
   });
 
   pi.registerTool({
     name: "think", label: "Think",
     description: "PFC debate graph: 2 debaters + judge + memory links — hypotheses are scored via rubric cost/risk/reversibility/relevance, winner pinned, loser pruned, graph replayable via recall. Clean: explicit, no hidden.",
-    promptSnippet: "Run a PFC debate (2 debaters + judge, rubric-scored) before acting",
-    promptGuidelines: ["Use think before planning when the approach is unclear or risky; unhappy path requires think{goal:'debug <task>', hypotheses:[cause,fix]}."],
+    promptSnippet: "Run a PFC debate (2 debaters + judge, rubric-scored) before acting — prefer object shape hypotheses:[{side,argues,cost,risk,rev}]",
+    promptGuidelines: ["Use think before planning when the approach is unclear or risky; prefer object shape hypotheses:[{side, argues, cost, risk, rev}] over pipe-strings; unhappy path requires think{goal:'debug <task>', hypotheses:[cause,fix]}."],
     parameters: Type.Object({
       goal: Type.String({ description: "Reasoning goal or question" }),
-      hypotheses: Type.Array(Type.String(), { description: "Hypotheses — each debater: \"Side A | cost:3 risk:2 rev:9 | argues...\" or plain argues. QDS Delete <4 hidden.", minItems: 1, maxItems: 3 }),
+      hypotheses: Type.Array(Type.Union([Type.String(), Type.Object({ side: Type.String(), argues: Type.String(), cost: Type.Optional(Type.Number()), risk: Type.Optional(Type.Number()), rev: Type.Optional(Type.Number()), reversibility: Type.Optional(Type.Number()) })]), { description: "Hypotheses — each debater: string \"Side A | cost:3 risk:2 rev:9 | argues...\" OR object {side, argues, cost?, risk?, rev?} — prefer object. QDS Delete <4 hidden.", minItems: 1, maxItems: 3 }),
       conclusion: Type.Optional(Type.String({ description: "Tentative conclusion / judge reason" })),
       parentId: Type.Optional(Type.String({ description: "Parent deliberation id for branching / time-travel" })),
     }),
     async execute(_id, params, _signal) {
       if(brain.needsDebugThink&&!params.goal.trim().toLowerCase().startsWith("debug")) return {content:[{type:"text",text:"Blocked: unhappy path requires think{goal:'debug <failed Task N>', hypotheses:[cause,fix]} — goal must start with 'debug'"}],details:{error:"debug required"}} as any;
-      const wasDebug=brain.needsDebugThink;
-      const rawHyps = params.hypotheses.map((h:string)=>truncate(h));
+      const rawInputs: any[] = (params as any).hypotheses;
+      // S01 dual-shape: normalize object hypotheses to pipe-string for parser, keep structured
+      const rawHyps: string[] = rawInputs.map((h:any)=> {
+        if (typeof h === "string") return truncate(h);
+        if (h && typeof h === "object" && h.side && h.argues) {
+          const c = h.cost ?? h.risk ?? h.rev ?? h.reversibility !== undefined ? ` cost:${h.cost ?? 5} risk:${h.risk ?? 5} rev:${h.rev ?? h.reversibility ?? 8}` : "";
+          const s = `${h.side} |${c} | ${h.argues}`;
+          return truncate(s);
+        }
+        return truncate(String(h));
+      });
       const parsed = rawHyps.map((h:string)=>{
         const rel = relevanceForRemember(params.goal, h, undefined, undefined, undefined);
         const rubric = rubricForHypothesis(h, rel.score);
@@ -209,39 +336,51 @@ export function registerTools(pi: ExtensionAPI) {
     },
   });
 
-  const creativeParams=Type.Object({ cues:Type.Array(Type.String(),{description:"2-3 cues to combine",minItems:2,maxItems:3}), prompt:Type.Optional(Type.String({description:"Synthesis prompt (e.g. approach to ...)"})) });
+  const creativeParams=Type.Object({ cues:Type.Array(Type.String(),{description:"2-3 cues to combine",minItems:2,maxItems:3}), prompt:Type.Optional(Type.String({description:"Synthesis prompt (e.g. approach to ...)"})), autoEnrich: Type.Optional(Type.Boolean({ description: "Opt-in auto-enrich for vague prompts (S10)" })) });
   pi.registerTool({
     name: "creative-thinking", label: "Creative Thinking",
     description: "Creative synthesis: fuse distant episodes + latest think into novel approach. Prompt e.g. 'creative-thinking neon + login into glass login' NOT vague 'creative approach' (loose auto-enriched). No vector DB.",
     promptSnippet: "Fuse 2-3 distant cues into a novel approach",
-    promptGuidelines: ["Use creative-thinking only for creative/novel tasks (not CRUD/bugfix); give specific cues like 'neon + login into glass login', not vague 'creative approach'."],
+    promptGuidelines: ["Use creative-thinking only for creative/novel tasks (not CRUD/bugfix); give specific cues like 'neon + login into glass login', not vague 'creative approach'. Prompt must be ≥15 chars or set autoEnrich:true."],
     parameters: creativeParams,
     async execute(_id, params, signal) {
       if(signal?.aborted) return {content:[{type:"text",text:"aborted"}],details:{}} as any;
-      const pooled: BrainEpisode[]=[]; for(const q of params.cues){ const hits=candidatePool(q).map(e=>({e,s:scoreEpisode(e,q)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,2).map(x=>x.e); pooled.push(...hits); }
+      const pooled: BrainEpisode[]=[]; for(const q of (params as any).cues){ const hits=candidatePool(q).map(e=>({e,s:scoreEpisode(e,q)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,2).map(x=>x.e); pooled.push(...hits); }
       const unique=[...new Map(pooled.map(e=>[e.id,e])).values()].slice(0,5);
-      const recentThink=brain.deliberations.slice(-1).map((d:any)=>`[think: ${d.goal}] ${d.hypotheses.join("; ")}${d.conclusion?` => ${d.conclusion}`:""}`).join("\n");
+      const recentThink=brain.deliberations.slice(-1).map((d:any)=>`[think: ${d.goal}] ${d.hypotheses.join("; ")} ${d.conclusion?` => ${d.conclusion}`:""}`).join("\n");
       if(!unique.length&&!recentThink) return {content:[{type:"text",text:"No episodes found for cues. Use remember first."}],details:{episodes:[]}};
-      const thinkGoal=brain.deliberations[brain.deliberations.length-1]?.goal??"", raw=params.prompt?.trim(), isLoose=!raw||raw.length<15||/^creative approach/i.test(raw);
-      const synthesisPrompt=isLoose?(raw?`${raw} — fuse ${params.cues.join(" + ")}${thinkGoal?` + think: ${thinkGoal}`:""}`:`Create a novel approach combining: ${params.cues.join(" + ")}${thinkGoal?` + think: ${thinkGoal}`:""}`):raw;
+      const thinkGoal=brain.deliberations[brain.deliberations.length-1]?.goal??"", raw=(params as any).prompt?.trim(), isLoose=!raw||raw.length<15||/^creative approach/i.test(raw);
+      if (isLoose && !(params as any).autoEnrich) {
+        return {content:[{type:"text",text:`Creative prompt too vague (length ${raw?.length??0} <15). Provide specific prompt like "neon + login into glass login" or set autoEnrich:true to allow loose synthesis.`}],details:{error:"vague prompt", cues:(params as any).cues}} as any;
+      }
+      const synthesisPrompt=isLoose?(raw?`${raw} — fuse ${(params as any).cues.join(" + ")}${thinkGoal?` + think: ${thinkGoal}`:""}`:`Create a novel approach combining: ${(params as any).cues.join(" + ")}${thinkGoal?` + think: ${thinkGoal}`:""}`):raw;
       const sources=unique.length?`Sources:\n${unique.map(e=>`[${e.cue}] ${gistForEpisode(e)}`).join("\n")}`:"", deliberationBlock=recentThink?`Deliberation:\n${recentThink}`:"", context=[sources,deliberationBlock].filter(Boolean).join("\n\n");
-      return {content:[{type:"text",text:truncate(`${synthesisPrompt}\n\n${context}\n\n→ Combine insights: fuse episode patterns WITH deliberation hypotheses into variant not in either source.`)}],details:{episodes:unique,cues:params.cues,deliberation:recentThink||undefined}};
+      return {content:[{type:"text",text:truncate(`${synthesisPrompt}\n\n${context}\n\n→ Combine insights: fuse episode patterns WITH deliberation hypotheses into variant not in either source.`)}],details:{episodes:unique,cues:(params as any).cues,deliberation:recentThink||undefined}};
     },
   });
 
   pi.registerTool({
     name: "plan", label: "Plan",
-    description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). QDS: tasks scored for relevance, vague <4 hidden, linked to debate winner, depends-validated, branchable via parentId. Requires 3-10 well-split tasks. When all [x], bash: git init if needed + commit (model-driven nudge). Graph: recallable via links.",
+    description: "Create/update detailed ordered tasklist after think (+ creative-thinking if novel). QDS: tasks scored for relevance, vague <4 flagged not deleted (S02), linked to debate winner, depends-validated, branchable via parentId. Requires 3-10 well-split tasks. Templates: bugfix|feature|refactor. Parallel groups hinted. When all [x], bash: git init if needed + commit (model-driven nudge). Graph: recallable via links.",
     promptSnippet: "Create/update an ordered tasklist (3-10 detailed tasks, depends DAG)",
-    promptGuidelines: ["Use plan after think for multi-step work; mark tasks done via plan{id,done:[i]}; git init+commit on completion is a model-driven nudge."],
+    promptGuidelines: ["Use plan after think for multi-step work; mark tasks done via plan{id,done:[i]}; git init+commit on completion is a model-driven nudge. Use template:bugfix|feature|refactor to scaffold."],
     parameters: Type.Object({
       goal: Type.Optional(Type.String({ description: "Plan goal (e.g. creative login page)" })),
-      tasks: Type.Optional(Type.Array(Type.String(), { description: "Detailed ordered tasks — rich: 'title | refs:src/a.ts check:bash: ... risk:5 estimate:15m depends:0,1' — QDS Delete <4 hidden" })),
+      tasks: Type.Optional(Type.Array(Type.String(), { description: "Detailed ordered tasks — rich: 'title | refs:src/a.ts check:bash: ... risk:5 estimate:15m depends:0,1' — QDS <4 flagged not hidden (S02)" })),
       id: Type.Optional(Type.String({ description: "Existing plan id to update" })),
       done: Type.Optional(Type.Array(Type.Number({ minimum: 0 }), { description: "Indices to mark done (0-based) — depends-verified DAG: a task is blocked until its depends are done" })),
       parentId: Type.Optional(Type.String({ description: "Parent plan id for branching / time-travel" })),
+      template: Type.Optional(Type.String({ description: "Template: bugfix|feature|refactor — expands to 5 tasks (S13)" })),
     }),
     async execute(_id, params, _signal) {
+      // S13 template expansion
+      let effectiveTasks = params.tasks;
+      if ((params as any).template && !effectiveTasks?.length) {
+        const tpl = expandTemplate(params.goal ?? "", (params as any).template);
+        if (tpl) effectiveTasks = tpl;
+      } else if ((params as any).template && effectiveTasks?.length) {
+        // template + custom tasks: prepend template hint but keep custom
+      }
       if(params.id&&brain.plans.has(params.id)){
         const pl=brain.plans.get(params.id)!;
         if(params.done?.length) {
@@ -258,9 +397,9 @@ export function registerTools(pi: ExtensionAPI) {
             t.done=true;
           }
         }
-        if(params.tasks?.length){
+        if(effectiveTasks?.length){
           const existing=new Set(pl.tasks.map(t=>t.title.trim().toLowerCase()));
-          for(const raw of params.tasks){
+          for(const raw of effectiveTasks){
             const parsed = parsePlanTask(raw);
             const norm=parsed.title.trim().toLowerCase();
             if(!existing.has(norm)){
@@ -279,22 +418,22 @@ export function registerTools(pi: ExtensionAPI) {
         await (pi as any).appendEntry?.("brain:plan", pl); await saveMemory();
         (pi as any).events?.emit?.("brain:plan", pl);
         const doneAll = pl.tasks.every(t=>t.done);
+        const parallelGroups = getParallelGroups(pl);
         const commitHint = doneAll ? `\n[Commit ready: bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: ${pl.goal.slice(0,40)}']` : "";
-        return {content:[{type:"text",text:truncate(renderPlan(pl)+`\n(id: ${pl.id})` + (pl.parentId?` parent:${pl.parentId}`:"") + commitHint)}],details:{plan:pl, commitHint: doneAll ? `git add -A && git commit -m 'feat: ${pl.goal.slice(0,40)}'` : undefined}};
+        return {content:[{type:"text",text:truncate(renderPlan(pl)+`\n(id: ${pl.id})` + (pl.parentId?` parent:${pl.parentId}`:"") + commitHint)}],details:{plan:pl, parallelGroups, commitHint: doneAll ? `git add -A && git commit -m 'feat: ${pl.goal.slice(0,40)}'` : undefined}};
       }
-      if(!params.goal||!params.tasks?.length) return {content:[{type:"text",text:"plan: goal and tasks required for new plan (use id+done to update)"}],details:{error:"missing goal/tasks"}} as any;
-      const taskErr=planTaskError(params.tasks); if(taskErr) return {content:[{type:"text",text:taskErr}],details:{error:"invalid tasks",count:params.tasks.length}} as any;
-      const parsedTasks = params.tasks.map((raw:string)=>{
+      if(!params.goal||!effectiveTasks?.length) return {content:[{type:"text",text:"plan: goal and tasks required for new plan (use id+done to update) — or provide template:bugfix|feature|refactor"}],details:{error:"missing goal/tasks"}} as any;
+      const taskErr=planTaskError(effectiveTasks); if(taskErr) return {content:[{type:"text",text:taskErr}],details:{error:"invalid tasks",count:effectiveTasks.length}} as any;
+      const parsedTasks = effectiveTasks.map((raw:string)=>{
         const p = parsePlanTask(raw);
         const rel = relevanceForRemember(params.goal!, p.title, undefined, undefined, p.refs);
         return { raw, parsed:p, rel };
       });
+      // S02 keep-flag vs delete: keep all flagged, not deleted (low relevance tagged)
       let kept = parsedTasks;
-      if(parsedTasks.length >= 4) {
-        const filtered = parsedTasks.filter(t=> t.rel.score >= 4);
-        if(filtered.length >= 3) kept = filtered;
-      }
-      const deletedCount = parsedTasks.length - kept.length;
+      const deletedCount = 0;
+      const deletedCues: string[] = [];
+      // previously filtered low relevance; now keep all but flag low in render/details
       const latestThink = brain.deliberations.slice(-1)[0];
       let debateNote = "";
       let links: string[] = [];
@@ -311,7 +450,7 @@ export function registerTools(pi: ExtensionAPI) {
         links = [...(latestThink.links||[])].slice(0,2);
         debateId = latestThink.id;
       }
-      const qdsNote = deletedCount ? `\n[QDS Delete: ${deletedCount} low-relevance task hidden <4/10]` : "";
+      const qdsNote = "";
       const depErrIdx = kept.findIndex((t, i) => t.parsed.depends?.some(d => !(Number.isInteger(d) && d >= 0 && d < i)));
       if (depErrIdx >= 0) return { content: [{ type: "text", text: `Plan rejected: Task ${depErrIdx+1} "${kept[depErrIdx].parsed.title.slice(0,60)}" has invalid depends ${JSON.stringify(kept[depErrIdx].parsed.depends)} — depends are 0-based indices of EARLIER tasks in the final list (valid: 0..${depErrIdx-1}). Fix depends and retry.` }], details: { error: "invalid depends", task: depErrIdx, depends: kept[depErrIdx].parsed.depends } } as any;
       const tasksRich = kept.map(t=>({ title:truncate(t.parsed.title), done:false, refs:t.parsed.refs, check:t.parsed.check, estimate:t.parsed.estimate, risk:t.parsed.risk, depends:t.parsed.depends, relevance: t.rel.score }));
@@ -319,9 +458,10 @@ export function registerTools(pi: ExtensionAPI) {
       if((params as any).done?.length) for(const i of (params as any).done as number[]) if(pl.tasks[i]) pl.tasks[i].done=true;
       brain.plans.set(pl.id, pl); brain.cachedLatestPlan=pl; brain.hasPlan=true; await saveMemory();
       await (pi as any).appendEntry?.("brain:plan", pl); (pi as any).events?.emit?.("brain:plan", pl);
-      const taskLines = tasksRich.map((t,i)=>`[ ] Task ${i+1}: ${t.title} — ${formatRelevance(t.relevance!)}${t.refs?` refs:${t.refs.join(",")}`:""}${t.check?` check:${t.check.slice(0,30)}`:""}${t.risk!==undefined?` risk:${t.risk}`:""}${t.depends?.length?` depends:[${t.depends.map(d=>d+1).join(",")}]`:""}`).join("\n");
+      const parallelGroups = getParallelGroups(pl);
+      const taskLines = tasksRich.map((t,i)=>`[ ] Task ${i+1}: ${t.title} — ${formatRelevance(t.relevance!)}${t.refs?` refs:${t.refs.join(",")}`:""}${t.check?` check:${t.check.slice(0,30)}`:""}${t.risk!==undefined?` risk:${t.risk}`:""}${t.depends?.length?` depends:[${t.depends.map(d=>d+1).join(",")}]`:""}${t.relevance!==undefined && t.relevance <4 ? ` [low ${t.relevance.toFixed(1)}/10]` : ""}${parallelGroups.some(g=> g.length>1 && g.includes(i)) ? " [parallelizable]" : ""}`).join("\n");
       const commitHint = `\n[Commit on done: bash: git rev-parse --is-inside-work-tree || git init; git add -A && git commit -m 'feat: ${pl.goal.slice(0,40)}']`;
-      return {content:[{type:"text",text:truncate(`${pl.goal} — relevance ${pl.score!==undefined?formatRelevance(pl.score):"n/a"}${pl.parentId?` (parent ${pl.parentId})`:""}${links.length?` links:[${links.join(",")}]`:""}${debateId?` debate:${debateId}`:""}\n` + taskLines + qdsNote + debateNote + `\n(id: ${pl.id})` + `\n[depends-verified: next task blocked until its depends are done]` + commitHint)}],details:{plan:pl, deletedCount, links, debateId, commitHint: `git add -A && git commit -m 'feat: ${pl.goal.slice(0,40)}'`}};
+      return {content:[{type:"text",text:truncate(`${pl.goal} — relevance ${pl.score!==undefined?formatRelevance(pl.score):"n/a"}${pl.parentId?` (parent ${pl.parentId})`:""}${links.length?` links:[${links.join(",")}]`:""}${debateId?` debate:${debateId}`:""}\n` + taskLines + qdsNote + debateNote + `\n(id: ${pl.id})` + `\n[depends-verified: next task blocked until its depends are done]` + ` parallelGroups:${JSON.stringify(parallelGroups)}` + commitHint)}],details:{plan:pl, deletedCount, deletedCues, links, debateId, parallelGroups, commitHint: `git add -A && git commit -m 'feat: ${pl.goal.slice(0,40)}'`}};
     },
   });
 
@@ -359,6 +499,13 @@ export function registerTools(pi: ExtensionAPI) {
     }),
     async execute(_id, params, _sig, _upd, ctx: any) {
       const verbose = (params as any)?.verbose ?? isVerbose();
+      // S23 lazy: only reuse cache when memoGen unchanged AND not overloaded (overload depends on live ctx)
+      if (statusCache && statusCache.gen === brain.memoGen && statusCache.verbose === verbose) {
+        // still emit overload if ctx says so
+        try { const u:any = ctx?.getContextUsage?.() ?? (pi as any).getContextUsage?.(); const pct=u?.percent ?? null; if ((pct!==null && pct>80) || brain.episodes.size>50) (pi as any).events?.emit?.("brain:overload",{episodes:brain.episodes.size,percent:pct}); } catch {}
+        const cached = statusCache.text;
+        return {content:[{type:"text",text:cached}],details:{episodes:brain.episodes.size, cached:true}} as any;
+      }
       let usage:any=undefined; try{ usage=ctx?.getContextUsage?.()?? (pi as any).getContextUsage?.()??undefined; }catch{}
       const count=brain.episodes.size, autoCount=[...brain.episodes.values()].filter(e=>e.source==="auto").length, remCount=count-autoCount;
       const usedToks:number|null = usage?.tokens ?? null, totalToks:number|null = usage?.contextWindow ?? null;
@@ -378,13 +525,14 @@ export function registerTools(pi: ExtensionAPI) {
       ];
       if (verbose) {
         const gistPreview=[...brain.episodes.values()].sort((a,b)=>b.ts-a.ts).slice(0,3).map(gistForEpisode).join(" | "), gistTokens=estTokens(gistPreview);
-        const knobs=`Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d${KNOBS_SOURCE?` (override ${KNOBS_SOURCE})`:""}`;
+        const knobs=`Knobs: MAX_BYTES=${MAX_BYTES} MAX_LINES=${MAX_LINES} TAG_BOOST=${TAG_BOOST} HALF_LIFE=${HALF_LIFE_FACTOR}/${HALF_LIFE_DAYS}d REMEMBER_BOOST=${REMEMBER_BOOST} AUTO_BOOST=${AUTO_BOOST} TTL=${AUTO_TTL_MS/86400000}d${KNOBS_SOURCE?` (override ${KNOBS_SOURCE})`:""} SIMILAR_BLOCK_AT=${SIMILAR_BLOCK_AT}`;
         const budget=pct!==null?`Budget: ${pct}% ${pct>BUDGET_STOP_PCT?"(STOP inject)":pct>BUDGET_WARN_PCT?"(warn: inject 1)":""}`:`Budget: est ${gistTokens} tokens gist`;
         lines.push(`Gist preview (${gistTokens} tok): ${gistPreview.slice(0,120)}`, knobs, budget);
         if (brain.lastCompactionKept.length) lines.push(`Last compaction kept: [${brain.lastCompactionKept.slice(0,5).join(",")}]`);
       }
       const txt=lines.join("\n");
-      return {content:[{type:"text",text:txt}],details:{episodes:count,autoCount,remCount,tokens:usage,recent:[...brain.episodes.values()].slice(-3),overloaded,deliberations:brain.deliberations.slice(-3),index:{tokens:brain.tokenIndex.size,episodes:count,memoHits:brain.memoHits,memoMisses:brain.memoMisses, gen: brain.memoGen},stats:{...brain.stats, verbose: isVerbose()},knobs:{MAX_BYTES,MAX_LINES,TAG_BOOST,HALF_LIFE_DAYS,HALF_LIFE_FACTOR,REMEMBER_BOOST,AUTO_BOOST, source: KNOBS_SOURCE}, lastCompactionKept: brain.lastCompactionKept}};
+      statusCache = { gen: brain.memoGen, verbose, text: txt };
+      return {content:[{type:"text",text:txt}],details:{episodes:count,autoCount,remCount,tokens:usage,recent:[...brain.episodes.values()].slice(-3),overloaded,deliberations:brain.deliberations.slice(-3),index:{tokens:brain.tokenIndex.size,episodes:count,memoHits:brain.memoHits,memoMisses:brain.memoMisses, gen: brain.memoGen},stats:{...brain.stats, verbose: isVerbose()},knobs:{MAX_BYTES,MAX_LINES,TAG_BOOST,HALF_LIFE_DAYS,HALF_LIFE_FACTOR,REMEMBER_BOOST,AUTO_BOOST, SIMILAR_BLOCK_AT, source: KNOBS_SOURCE}, lastCompactionKept: brain.lastCompactionKept}};
     },
   });
 }

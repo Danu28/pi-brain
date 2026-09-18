@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { setFooter } from "./footer";
-import { brain, getBrainMode, saveMemory, writeMode } from "./state";
+import { brain, getBrainMode, saveMemory, writeMode, MODE_SOURCE } from "./state";
 
 export function registerCommand(pi: ExtensionAPI) {
   pi.registerCommand("pi-brain", {
@@ -46,7 +46,8 @@ export function registerCommand(pi: ExtensionAPI) {
       if (arg === "status" || arg === "" || arg === "help") {
         const mode = getBrainMode();
         const fc = brain.failureCount ?? 0;
-        const txt = `pi-brain: ${mode.toUpperCase()} (strict=block, guided=nudge, off=disabled)\nEpisodes: ${brain.episodes.size} | Deliberations: ${brain.deliberations.length} | Index: ${brain.tokenIndex.size} tokens | failures: ${fc}/2\nUsage: /pi-brain strict | /pi-brain guided | /pi-brain off | /pi-brain status (help)`;
+        const src = MODE_SOURCE ? ` (source: ${MODE_SOURCE})` : "";
+        const txt = `pi-brain: ${mode.toUpperCase()}${src} (strict=block, guided=nudge, off=disabled)\nEpisodes: ${brain.episodes.size} | Deliberations: ${brain.deliberations.length} | Index: ${brain.tokenIndex.size} tokens | failures: ${fc}/2\nUsage: /pi-brain strict | /pi-brain guided | /pi-brain off | /pi-brain status (help)`;
         ctx.ui.notify(txt, "info");
         return;
       }

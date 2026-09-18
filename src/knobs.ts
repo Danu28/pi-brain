@@ -21,6 +21,7 @@ export let PRUNE_WARN = 35;
 export let PRUNE_CAP = 40;
 export let RELEVANCE_MIN_REMEMBER = 4;
 export let RELEVANCE_MIN_RECALL = 5.0;
+export let SIMILAR_BLOCK_AT = 3;
 
 export let KNOBS_SOURCE: string | null = null;
 function loadKnobs() {
@@ -49,6 +50,9 @@ function loadKnobs() {
           case "PRUNE_CAP": PRUNE_CAP = v; applied = true; break;
           case "RELEVANCE_MIN_REMEMBER": RELEVANCE_MIN_REMEMBER = v; applied = true; break;
           case "RELEVANCE_MIN_RECALL": RELEVANCE_MIN_RECALL = v; applied = true; break;
+          case "SIMILAR_BLOCK_AT": SIMILAR_BLOCK_AT = v; applied = true; break;
+          case "BUDGET_WARN_PCT": BUDGET_WARN_PCT = v; applied = true; break;
+          case "BUDGET_STOP_PCT": BUDGET_STOP_PCT = v; applied = true; break;
         }
       }
       if (applied) {
@@ -62,12 +66,13 @@ loadKnobs();
 
 export function truncate(text: string): string {
   if (!text) return text;
+  const hint = " — full detail via recall{query:\"cue\"} or .pi/agent/pi-brain-memory.json";
   const lines = text.split("\n");
-  if (lines.length > MAX_LINES) text = lines.slice(0, MAX_LINES).join("\n") + `\n[truncated ${lines.length - MAX_LINES} lines]`;
+  if (lines.length > MAX_LINES) text = lines.slice(0, MAX_LINES).join("\n") + `\n[truncated ${lines.length - MAX_LINES} lines${hint}]`;
   const byteLen = typeof Buffer !== "undefined" ? Buffer.byteLength(text, "utf8") : new TextEncoder().encode(text).length;
   if (byteLen > MAX_BYTES) {
-    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "") + "\n[truncated to 50KB]";
-    else text = text.slice(0, MAX_BYTES) + "\n[truncated to 50KB]";
+    if (typeof Buffer !== "undefined") text = Buffer.from(text, "utf8").slice(0, MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "") + `\n[truncated to 50KB${hint}]`;
+    else text = text.slice(0, MAX_BYTES) + `\n[truncated to 50KB${hint}]`;
   }
   return text;
 }

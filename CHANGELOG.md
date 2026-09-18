@@ -4,6 +4,40 @@ All notable changes to pi-brain follow [Keep a Changelog](https://keepachangelog
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-18
+
+### Agent-friendly P0 (S01-S10)
+- **S01 dual-shape think** — `hypotheses:[{side, argues, cost?, risk?, rev?}]` object shape preferred, pipe-string fallback kept; `RUBRIC_RE` single-pass unchanged (`src/tools.ts`, `src/scoring.ts`)
+- **S02 keep-flag vs delete** — plan keeps low-relevance tasks flagged `[low 2.1/10]` instead of silent QDS delete; `details.deletedCount/preview` optional (`src/tools.ts`, `src/state.ts` `renderPlan`)
+- **S03 recall breakdown top 3** — `scoreBreakdown` now top 3 with `halfLife`/`sourceBoost` structured `details.breakdown[3]` (+80 tok, better picks) (`src/tools.ts`)
+- **S04 trivial-edit escape** — `risk≤3 + singleFile + <30 lines/<800 chars` bypasses strict `plan` gate; logged `brain:block {trivial:true}` (`src/hooks.ts`)
+- **S05 replay polish** — `recall{query:"plan:xyz"}`/`"brain-plan:xyz"` normalized double-prefix; returns `details.replay:true` + compact render + linked plans/episodes (`src/tools.ts`)
+- **S06 fix templates** — block reasons carry copy-paste `think{goal,hypotheses}`/`plan{goal,tasks}` fix (`src/hooks.ts` `blockHint`)
+- **S07 knob SIMILAR_BLOCK_AT** — `SIMILAR_BLOCK_AT=3` tunable via `pi-brain.knobs.json`; `remember` audit uses knob + `force` hint (`src/knobs.ts`, `src/tools.ts`)
+- **S08 auto-link think↔plan↔episodes** — bidirectional `links` stored; `recall{query:"think:id"}` surfaces linked plan/episodes (`src/tools.ts`)
+- **S09 deletedCues surfacing** — recall returns `details.deletedCount + deletedCues[3]` when `score<5.0` hidden; plan exposes flagged lows (`src/tools.ts`)
+- **S10 delete auto-enrich** — `creative-thinking` requires `prompt.length≥15` or `autoEnrich:true`; vague prompt returns actionable error (`src/tools.ts`)
+
+### Productivity P1 (S11-S16)
+- **S11 batch remember** — `remember_batch{episodes:[8]}` + server dedup + one `saveMemory` flush; doc 5-parallel `Promise.all(cues.map(c=>remember(c)))` 7× faster (`src/tools.ts`)
+- **S12 parallel hint** — `renderPlan` tags `[parallelizable]` when tasks share no `depends`; `details.parallelGroups:[[0,1],[2]]` + `getParallelGroups()` (`src/state.ts`, `src/tools.ts`)
+- **S13 templates** — `plan{template:"bugfix|feature|refactor"}` expands 5-task skeleton with `refs/check/risk` placeholders; DAG preserved (`src/tools.ts` `PLAN_TEMPLATES`)
+- **S14 memo 100/60s** — `recallMemo` cap 100 (was 50), `RECALL_MEMO_MS` tunable 30s→60s; `limit` included in memo key (`src/tools.ts`, `src/knobs.ts`)
+- **S15 resources_discover** — re-enabled `.pi/skills/brain-*/SKILL.md` indexing so habits auto-load without reload (`src/index.ts`)
+- **S16 gated auto-commit** — `turn_end` when `isPlanDone() && git diff --quiet` fails emits `brain:commit-ready` + one-line `bash` nudge (never push) (`src/hooks.ts`)
+
+### User-friendly P2 (S17-S20)
+- **S17 footer counts** — `🧠 ON 12 • 3/5 • 42%` collapsed; tooltip `mode | episodes | failures | last plan goal` (`src/footer.ts`)
+- **S18 debounced nudges** — 1 nudge/turn max (1000ms), extends terse duplicate to guided, `PI_BRAIN_QUIET=1` silences UI nudges (still emits `brain:nudge`) (`src/hooks.ts`)
+- **S19 per-project mode** — `.pi/brain.json` (cwd) wins over global `~/.pi/agent/pi-brain.json`; `/pi-brain status` prints `mode: strict (source: .pi/brain.json)` (`src/state.ts` `MODE_SOURCE`)
+- **S20 truncation honesty** — `[truncated to 50KB — full detail via recall{query:"cue"} or .pi/agent/pi-brain-memory.json]` (`src/knobs.ts` `truncate`)
+
+### Cost-efficient P3 (S21-S24)
+- **S21 debounced sidecar** — 300ms debounce coalesce via `saveChain`/`pendingSave`; flush on `session_shutdown` + `turn_end` plan-done + `before_agent_start` (`src/state.ts`)
+- **S22 budget-aware compaction** — `pct>85 keep 5 else if pct>75 keep 1 else keep 3`; gist cap 120 chars + `compressEpisodes` dedup by cue (`src/session.ts`)
+- **S23 lazy status** — `brain-status` memoizes `Index: …` until `memoGen` bumps; `gistForEpisode` loop skipped on cache hit (`src/tools.ts` `statusCache`)
+- **S24 archive vs prune** — `pi-brain-archive.jsonl` append (1 JSON/line) instead of silent drop; `recall{archive:true}` searches it (`src/scoring.ts` `pruneExpired`+`archiveEpisodes`)
+
 ## [2.0.0] — 2026-09-17
 
 ### Added

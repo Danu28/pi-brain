@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { AUTO_BOOST, HALF_LIFE_DAYS, HALF_LIFE_FACTOR, PRUNE_CAP, REMEMBER_BOOST, TAG_BOOST, truncate } from "./knobs";
 import { brain, isVerbose } from "./state";
 import type { BrainEpisode } from "./types";
@@ -213,20 +214,26 @@ function toksFor(e: BrainEpisode): Set<string> { return new Set([...tokenizeCach
 export function indexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) { let set=brain.tokenIndex.get(tok); if(!set){ set=new Set(); brain.tokenIndex.set(tok,set); } set.add(e.id); } brain.memoGen++; brain.recallMemo.clear(); }
 export function unindexEpisode(e: BrainEpisode) { for (const tok of toksFor(e)) { const set=brain.tokenIndex.get(tok); if(set){ set.delete(e.id); if(set.size===0) brain.tokenIndex.delete(tok); } } brain.memoGen++; brain.recallMemo.clear(); }
 export function rebuildIndex(){ brain.tokenIndex.clear(); brain.memoGen++; brain.recallMemo.clear(); for(const e of brain.episodes.values()) indexEpisode(e); }
+function archivePath(): string { return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-brain-archive.jsonl"); }
+function archiveEpisodes(list: BrainEpisode[]) {
+  if (!list.length) return;
+  try { mkdirSync(dirname(archivePath()), { recursive: true }); for (const e of list) appendFileSync(archivePath(), JSON.stringify(e) + "\n", "utf8"); } catch {}
+}
 export function pruneExpired(pi: ExtensionAPI): number {
   const now=Date.now(); let n=0;
   const evicted: string[] = [];
+  const toArchive: BrainEpisode[] = [];
   let evictedRemember = false;
-  for(const [id,e] of brain.episodes) if(e.expiresAt&&e.expiresAt<now){ unindexEpisode(e); brain.episodes.delete(id); n++; evicted.push(id); }
+  for(const [id,e] of brain.episodes) if(e.expiresAt&&e.expiresAt<now){ unindexEpisode(e); brain.episodes.delete(id); n++; evicted.push(id); toArchive.push(e); }
   while(brain.episodes.size>PRUNE_CAP){
     const sorted=[...brain.episodes.values()].sort((a,b)=>a.ts-b.ts);
     const oldest=sorted.find(e=>e.source==="auto")??sorted[0]; if(!oldest) break;
     if(oldest.source!=="auto") evictedRemember=true;
     if(oldest.source!=="auto") (pi as any).events?.emit?.("brain:overload",{evictRemember:oldest.cue,size:brain.episodes.size});
-    unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; evicted.push(oldest.id);
+    unindexEpisode(oldest); brain.episodes.delete(oldest.id); n++; evicted.push(oldest.id); toArchive.push(oldest);
   }
-  if (n) { brain.stats.prune += n; (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5), evictedRemember }); if (evictedRemember && isVerbose()) try{ (pi as any).events?.emit?.("brain:verbose", `prune evicted remember ${evicted[0]} → ${brain.episodes.size} left`);}catch{}
-    // verbose prune toast is handled by caller via isVerbose check; no duplicate emit
+  if (toArchive.length) archiveEpisodes(toArchive);
+  if (n) { brain.stats.prune += n; (pi as any).events?.emit?.("brain:prune", { n, remaining: brain.episodes.size, evicted: evicted.slice(0,5), evictedRemember, archived: toArchive.length }); if (evictedRemember && isVerbose()) try{ (pi as any).events?.emit?.("brain:verbose", `prune evicted remember ${evicted[0]} → ${brain.episodes.size} left (archived)`);}catch{}
   }
   return n;
 }

@@ -2,6 +2,31 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncate } from "./knobs";
 import { brain, getBrainMode, isPlanDone, isVerbose } from "./state";
 
+function isQuiet(): boolean { return process.env.PI_BRAIN_QUIET === "1"; }
+let lastNudgeTs = 0;
+function shouldNudge(): boolean {
+  if (isQuiet()) return false;
+  const now = Date.now();
+  if (now - lastNudgeTs < 1000) return false;
+  lastNudgeTs = now;
+  return true;
+}
+function isTrivialEdit(ev: any): boolean {
+  try {
+    const inp = ev?.input ?? {};
+    const file = inp.file ?? inp.path ?? "";
+    if (!file) return false;
+    // trivial when single file + small diff (<30 lines or <800 chars) + risk ≤3 if supplied
+    const diffLen = (inp.oldText ?? inp.content ?? "").toString().split("\n").length;
+    const size = String(inp.oldText ?? inp.newText ?? inp.content ?? "").length;
+    const risk = inp.risk !== undefined ? Number(inp.risk) : 999;
+    if (risk !== 999 && risk > 3) return false;
+    if (diffLen > 30 || size > 800) return false;
+    // no DAG: not a plan-worthy change
+    return true;
+  } catch { return false; }
+}
+
 export function registerHooks(pi: ExtensionAPI) {
   const pendingSiblingNames = (ctx: any): Set<string> => {
     const names = new Set<string>();
@@ -122,37 +147,45 @@ export function registerHooks(pi: ExtensionAPI) {
     if (ev?.toolName === "write" || ev?.toolName === "edit" || ev?.toolName === "plan") {
       const pending = pendingSiblingNames(ctx);
       if (mode === "strict") {
+        // S04 trivial-edit escape: single-file small diff with risk≤3 bypasses plan gate
+        const trivial = (ev?.toolName === "write" || ev?.toolName === "edit") && isTrivialEdit(ev);
+        if (trivial) {
+          (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: "trivial-escape", reason: "trivial edit bypassed strict gate", mode, trivial: true });
+          // allow — do not block
+        } else {
         const thinkOk = brain.thinkSatisfied || pending.has("think");
         if (ev?.toolName === "plan" && !thinkOk) {
           brain.stats.block++;
           (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before plan", mode });
           if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block plan Rule 2 think first`, "warning"); } catch {}
-          return { block: true, reason: blockHint("r2", "Blocked by strict Rule 2: call think{goal,hypotheses} BEFORE plan — plan is gated on think. Think is MANDATORY.", "[brain:block Rule 2 — call think{goal,hypotheses} first, then plan]") } as any;
+          return { block: true, reason: blockHint("r2", "Blocked by strict Rule 2: call think{goal,hypotheses} BEFORE plan — plan is gated on think. Think is MANDATORY.\n→ fix: think{goal:\"add auth\", hypotheses:[\"Side A | cost:4 risk:3 rev:8 | JWT\", \"Side B | cost:6 risk:5 rev:6 | session\"]}", "[brain:block Rule 2 — call think{goal,hypotheses} first, then plan]") } as any;
         }
         if (ev?.toolName === "write" || ev?.toolName === "edit") {
           if (!thinkOk) {
             brain.stats.block++;
             (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 2, reason: "think before act", mode });
             if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 2 think first`, "warning"); } catch {}
-            return { block: true, reason: blockHint("r2", "Blocked by strict Rule 2: call think{goal,hypotheses} before write/edit. Think is MANDATORY — re-issue the batch after think + plan succeed.", "[brain:block Rule 2 — call think{goal,hypotheses} first, then re-issue edits]") } as any;
+            return { block: true, reason: blockHint("r2", "Blocked by strict Rule 2: call think{goal,hypotheses} before write/edit. Think is MANDATORY — re-issue the batch after think + plan succeed.\n→ fix: think{goal:\"add auth\", hypotheses:[\"A | cost:4 risk:3 rev:8 | JWT\", \"B | cost:6 risk:5 rev:6 | session\"]}", "[brain:block Rule 2 — call think{goal,hypotheses} first, then re-issue edits]") } as any;
           }
           const planOk = brain.hasPlan || (pending.has("think") && pending.has("plan"));
           if (!planOk) {
             brain.stats.block++;
             (pi as any).events?.emit?.("brain:block", { tool: ev?.toolName, rule: 4, reason: "plan after think", mode });
             if (isVerbose()) try { (ctx as any)?.ui?.notify?.(`brain:block ${ev?.toolName} Rule 4 plan first`, "warning"); } catch {}
-            return { block: true, reason: blockHint("r4", "Blocked by strict Rule 4: call plan{goal,tasks} AFTER think before write/edit. Think + Plan are MANDATORY.", "[brain:block Rule 4 — call plan{goal,tasks} first, then re-issue edits]") } as any;
+            return { block: true, reason: blockHint("r4", "Blocked by strict Rule 4: call plan{goal,tasks} AFTER think before write/edit. Think + Plan are MANDATORY.\n→ fix: plan{goal:\"implement auth\", tasks:[\"auth routes\",\"token schema\",\"login endpoint\",\"tests\"]}", "[brain:block Rule 4 — call plan{goal,tasks} first, then re-issue edits]") } as any;
           }
         }
+        }
       } else if (mode === "guided") {
+        // S18 debounced nudges: 1 per turn max + PI_BRAIN_QUIET silences UI nudges
         if (!brain.thinkSatisfied) {
           brain.stats.nudge++;
           (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 2, reason: "think recommended", mode });
-          try { (ctx as any)?.ui?.notify?.("Guided nudge: consider think{goal,hypotheses} before plan/write/edit", "warning"); } catch {}
+          if (shouldNudge()) try { (ctx as any)?.ui?.notify?.("Guided nudge: consider think{goal,hypotheses} before plan/write/edit", "warning"); } catch {}
         } else if (!brain.hasPlan && (ev?.toolName === "write" || ev?.toolName === "edit")) {
           brain.stats.nudge++;
           (pi as any).events?.emit?.("brain:nudge", { tool: ev?.toolName, rule: 4, reason: "plan recommended", mode });
-          try { (ctx as any)?.ui?.notify?.("Guided nudge: consider plan{goal,tasks} after think before write/edit", "warning"); } catch {}
+          if (shouldNudge()) try { (ctx as any)?.ui?.notify?.("Guided nudge: consider plan{goal,tasks} after think before write/edit", "warning"); } catch {}
         }
       }
     }
@@ -161,14 +194,28 @@ export function registerHooks(pi: ExtensionAPI) {
   pi.on("turn_end" as any, async (_ev: any, ctx: any) => {
     const mode = getBrainMode();
     if (mode === "off") return;
+    // flush debounced sidecar on turn_end if plan done (S21)
+    try { const { flushMemory, isPlanDone: _isDone } = await import("./state"); if (_isDone()) await flushMemory();
+    // gated auto-commit nudge (S16) — after plan done + dirty git + opt-in tests pass
+    if (_isDone() && !isQuiet()) {
+      try {
+        const { execSync } = await import("node:child_process");
+        const dirty = (()=> { try { execSync("git diff --quiet", { stdio:"ignore"}); return false; } catch { return true; }})();
+        if (dirty) {
+          (pi as any).events?.emit?.("brain:commit-ready", { goal: brain.cachedLatestPlan?.goal ?? "" });
+          if (shouldNudge()) try { ctx?.ui?.notify?.(`Commit ready: bash: git add -A && git commit -m 'feat: ${brain.cachedLatestPlan?.goal?.slice(0,40)??"update"}'`, "info"); } catch {}
+        }
+      } catch {}
+    }
+    } catch {}
     const prefix = mode === "strict" ? "Strict" : "Guided";
     if (brain.hasWriteEdit && !brain.hasRemember && !brain.rule5Warned && isPlanDone()) {
       brain.rule5Warned = true;
       brain.stats.nudge++;
       (pi as any).events?.emit?.("brain:nudge", { rule: 5, reason: "hasWriteEdit without remember after plan done", mode });
-      try { ctx?.ui?.notify?.(`${prefix} Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).`, "warning"); } catch {}
+      if (!isQuiet() && shouldNudge()) try { ctx?.ui?.notify?.(`${prefix} Rule 5: write/edit succeeded but no remember yet — call remember{cue,summary} to persist (2nd repeat → habit).`, "warning"); } catch {}
     } else if (brain.hasWriteEdit && !brain.hasRemember && brain.rule5Warned && isPlanDone()) {
-      if (isVerbose()) { brain.stats.nudge++; (pi as any).events?.emit?.("brain:nudge", { rule: 5, pending: true, mode }); try { ctx?.ui?.notify?.("brain:nudge Rule 5 still pending — call remember", "warning"); } catch {} }
+      if (isVerbose() && !isQuiet() && shouldNudge()) { brain.stats.nudge++; (pi as any).events?.emit?.("brain:nudge", { rule: 5, pending: true, mode }); try { ctx?.ui?.notify?.("brain:nudge Rule 5 still pending — call remember", "warning"); } catch {} }
     }
   });
 }
